@@ -1,88 +1,90 @@
-# UIT-ViC Image Captioning với BLIP
+# UIT-ViC Image Captioning with BLIP
 
-Dự án này triển khai mô hình **BLIP (Bootstrapping Language-Image Pre-training)** cho bài toán Sinh mô tả ảnh tự động (Image Captioning) bằng tiếng Việt, sử dụng tập dữ liệu **UIT-ViIC (Vietnamese Image Captioning)**.
+[![Kaggle Dataset](https://img.shields.io/badge/Kaggle-Dataset-blue.svg)](https://www.kaggle.com/datasets/leo040802/uitvic-dataset)
 
-## 📌 Giới thiệu
+This project implements the **BLIP (Bootstrapping Language-Image Pre-training)** model for the Image Captioning task in Vietnamese, utilizing the **UIT-ViIC (Vietnamese Image Captioning)** dataset.
 
-Image Captioning là quá trình tự động tạo ra một câu mô tả tự nhiên cho một hình ảnh đầu vào. Dự án này tận dụng sức mạnh của mô hình BLIP, một trong những mô hình tiên tiến trong lĩnh vực Vision-Language, và tinh chỉnh (fine-tune) trên tập dữ liệu tiếng Việt để tạo ra các câu mô tả chính xác và tự nhiên nhất.
+## 📌 Introduction
 
-### 🌟 Tính năng chính
-* Tinh chỉnh (Fine-tuning) mô hình BLIP trên tập dữ liệu UIT-ViIC.
-* Sinh câu mô tả (Inference) cho các hình ảnh mới bằng tiếng Việt.
-* Đánh giá hiệu suất mô hình bằng các độ đo phổ biến: BLEU, METEOR, ROUGE-L, CIDEr.
+Image Captioning is the process of automatically generating a natural language description for an input image. This project leverages the power of the BLIP model, one of the state-of-the-art models in the Vision-Language domain, and fine-tunes it on a Vietnamese dataset to generate the most accurate and natural captions.
 
-## 🛠 Cài đặt môi trường
+### 🌟 Key Features
+* Fine-tuning the BLIP model on the UIT-ViIC dataset.
+* Generating captions (Inference) for new images in Vietnamese.
+* Evaluating model performance using common metrics: BLEU, METEOR, ROUGE-L, CIDEr.
 
-Đảm bảo bạn đã cài đặt Python 3.8+ và PyTorch.
+## 🛠 Environment Setup
 
-1. **Clone repository:**
+Ensure you have Python 3.8+ and PyTorch installed.
+
+1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/uitvic-blip-captioning.git
-   cd uitvic-blip-captioning
+   git clone https://github.com/NtbAndroidDev/uitvic-caption.git
+   cd uitvic-caption
    ```
 
-2. **Tạo môi trường ảo (Khuyến nghị):**
+2. **Create a virtual environment (Recommended):**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # Trên Linux/Mac
-   # venv\Scripts\activate   # Trên Windows
+   source venv/bin/activate  # On Linux/Mac
+   # venv\Scripts\activate   # On Windows
    ```
 
-3. **Cài đặt các thư viện cần thiết:**
+3. **Install required libraries:**
    ```bash
-   pip install -r ../requirements.txt
+   pip install -r requirements.txt
    ```
 
-## 📂 Cấu trúc thư mục
+## 📂 Directory Structure
 
 ```text
 uitvic-captioning/
-├── configs/            # Chứa các tệp cấu hình (YAML/JSON) cho huấn luyện và đánh giá
-├── data/               # Thư mục chứa dữ liệu UIT-ViIC (Không push lên Git)
-├── notebooks/          # Jupyter notebooks cho EDA và thử nghiệm
-├── outputs/            # Thư mục chứa model checkpoints và kết quả (Không push lên Git)
-├── scripts/            # Các shell script hỗ trợ chạy các tác vụ
-├── src/                # Mã nguồn chính của dự án
-│   ├── dataset.py      # Xử lý dữ liệu và Dataloader
-│   ├── model.py        # Định nghĩa/Khởi tạo mô hình BLIP
-│   ├── train.py        # Quá trình huấn luyện mô hình
-│   ├── evaluate.py     # Đánh giá mô hình
-│   └── utils.py        # Các hàm tiện ích (metrics, logging,...)
-├── main.py             # Script chính để chạy toàn bộ pipeline
-└── README.md           # Tài liệu hướng dẫn
+├── configs/            # Configuration files (YAML/JSON) for training and evaluation
+├── data/               # Directory containing the UIT-ViIC dataset (Not pushed to Git)
+├── notebooks/          # Jupyter notebooks for EDA and experiments
+├── outputs/            # Directory containing model checkpoints and results (Not pushed to Git)
+├── scripts/            # Shell scripts to support running tasks
+├── src/                # Main source code of the project
+│   ├── dataset.py      # Data processing and Dataloader
+│   ├── model.py        # BLIP model definition/initialization
+│   ├── train.py        # Model training process
+│   ├── evaluate.py     # Model evaluation
+│   └── utils.py        # Utility functions (metrics, logging, etc.)
+├── main.py             # Main script to run the entire pipeline
+└── README.md           # Documentation
 ```
 
-## 🚀 Hướng dẫn sử dụng
+## 🚀 Usage Guide
 
-### 1. Chuẩn bị dữ liệu
-Tải tập dữ liệu UIT-ViIC trên [Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset) và đặt vào thư mục `data/`. Cấu trúc thư mục dữ liệu nên như sau:
+### 1. Data Preparation
+Download the UIT-ViIC dataset on [Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset) and place it in the `data/` directory. The data directory structure should be as follows:
 ```text
 data/
-├── images/             # Chứa toàn bộ hình ảnh
-├── train.json          # File annotations cho tập train
-├── val.json            # File annotations cho tập validation
-└── test.json           # File annotations cho tập test
+├── images/             # Contains all images
+├── train.json          # Annotations file for the training set
+├── val.json            # Annotations file for the validation set
+└── test.json           # Annotations file for the test set
 ```
 
-### 2. Huấn luyện mô hình (Training)
-Để bắt đầu quá trình huấn luyện từ đầu hoặc tinh chỉnh, chạy lệnh:
+### 2. Model Training
+To start the training process from scratch or fine-tune, run the following command:
 ```bash
 python main.py --mode train --config configs/train_config.yaml
 ```
 
-### 3. Đánh giá mô hình (Evaluation)
-Sau khi huấn luyện xong, chạy lệnh sau để đánh giá trên tập test:
+### 3. Model Evaluation
+After training is complete, run the following command to evaluate on the test set:
 ```bash
 python main.py --mode evaluate --config configs/eval_config.yaml --checkpoint outputs/best_model.pth
 ```
 
-### 4. Dự đoán (Inference)
-Để sinh câu mô tả cho một hình ảnh bất kỳ:
+### 4. Inference
+To generate a caption for any image:
 ```bash
 python main.py --mode inference --image_path path/to/your/image.jpg --checkpoint outputs/best_model.pth
 ```
 
-## 📊 Kết quả đánh giá (Dự kiến)
+## 📊 Evaluation Results (Expected)
 
 | Metric  | Score |
 |---------|-------|
@@ -91,14 +93,14 @@ python main.py --mode inference --image_path path/to/your/image.jpg --checkpoint
 | ROUGE-L | --    |
 | CIDEr   | --    |
 
-*(Kết quả chi tiết sẽ được cập nhật sau khi hoàn tất quá trình huấn luyện và đánh giá trên tập test của UIT-ViIC).*
+*(Detailed results will be updated after completing the training and evaluation process on the UIT-ViIC test set).*
 
-## 📚 Tài liệu tham khảo
+## 📚 References
 * [BLIP: Bootstrapping Language-Image Pre-training for Unified Vision-Language Understanding and Generation](https://arxiv.org/abs/2201.12086)
-* [UIT-ViIC: A Dataset for Vietnamese Image Captioning (Paper)](https://doi.org/10.1007/978-3-030-63007-2_62)
-* [Tập dữ liệu UIT-ViIC trên Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset)
+* [UIT-ViIC: A Dataset for Vietnamese Image Captioning (Paper)](https://arxiv.org/abs/2002.00175?utm_source=chatgpt.com)
+* [UIT-ViIC Dataset on Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset)
 * [Hugging Face Transformers](https://huggingface.co/docs/transformers/index)
 
-## ✍️ Tác giả
-* [Tên của bạn] - Sinh viên trường Đại học Công nghệ Thông tin (UIT) - ĐHQG-HCM.
-* Đồ án môn học / Khóa luận tốt nghiệp.
+## ✍️ Author
+* [Nguyen Thanh Binh](https://github.com/NtbAndroidDev) - Student at University of Information Technology (UIT) - VNU-HCM.
+* Course Project / Graduation Thesis.
