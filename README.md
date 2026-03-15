@@ -1,13 +1,13 @@
 # UIT-ViC Image Captioning với BLIP
 
-Dự án này triển khai mô hình **BLIP (Bootstrapping Language-Image Pre-training)** cho bài toán Sinh mô tả ảnh tự động (Image Captioning) bằng tiếng Việt, sử dụng tập dữ liệu **UIT-ViC (Vietnamese Image Captioning)**.
+Dự án này triển khai mô hình **BLIP (Bootstrapping Language-Image Pre-training)** cho bài toán Sinh mô tả ảnh tự động (Image Captioning) bằng tiếng Việt, sử dụng tập dữ liệu **UIT-ViIC (Vietnamese Image Captioning)**.
 
 ## 📌 Giới thiệu
 
 Image Captioning là quá trình tự động tạo ra một câu mô tả tự nhiên cho một hình ảnh đầu vào. Dự án này tận dụng sức mạnh của mô hình BLIP, một trong những mô hình tiên tiến trong lĩnh vực Vision-Language, và tinh chỉnh (fine-tune) trên tập dữ liệu tiếng Việt để tạo ra các câu mô tả chính xác và tự nhiên nhất.
 
 ### 🌟 Tính năng chính
-* Tinh chỉnh (Fine-tuning) mô hình BLIP trên tập dữ liệu UIT-ViC.
+* Tinh chỉnh (Fine-tuning) mô hình BLIP trên tập dữ liệu UIT-ViIC.
 * Sinh câu mô tả (Inference) cho các hình ảnh mới bằng tiếng Việt.
 * Đánh giá hiệu suất mô hình bằng các độ đo phổ biến: BLEU, METEOR, ROUGE-L, CIDEr.
 
@@ -38,7 +38,7 @@ Image Captioning là quá trình tự động tạo ra một câu mô tả tự 
 ```text
 uitvic-captioning/
 ├── configs/            # Chứa các tệp cấu hình (YAML/JSON) cho huấn luyện và đánh giá
-├── data/               # Thư mục chứa dữ liệu UIT-ViC (Không push lên Git)
+├── data/               # Thư mục chứa dữ liệu UIT-ViIC (Không push lên Git)
 ├── notebooks/          # Jupyter notebooks cho EDA và thử nghiệm
 ├── outputs/            # Thư mục chứa model checkpoints và kết quả (Không push lên Git)
 ├── scripts/            # Các shell script hỗ trợ chạy các tác vụ
@@ -55,7 +55,7 @@ uitvic-captioning/
 ## 🚀 Hướng dẫn sử dụng
 
 ### 1. Chuẩn bị dữ liệu
-Tải tập dữ liệu UIT-ViC và đặt vào thư mục `data/`. Cấu trúc thư mục dữ liệu nên như sau:
+Tải tập dữ liệu UIT-ViIC trên [Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset) và đặt vào thư mục `data/`. Cấu trúc thư mục dữ liệu nên như sau:
 ```text
 data/
 ├── images/             # Chứa toàn bộ hình ảnh
@@ -91,11 +91,12 @@ python main.py --mode inference --image_path path/to/your/image.jpg --checkpoint
 | ROUGE-L | --    |
 | CIDEr   | --    |
 
-*(Kết quả chi tiết sẽ được cập nhật sau khi hoàn tất quá trình huấn luyện và đánh giá trên tập test của UIT-ViC).*
+*(Kết quả chi tiết sẽ được cập nhật sau khi hoàn tất quá trình huấn luyện và đánh giá trên tập test của UIT-ViIC).*
 
 ## 📚 Tài liệu tham khảo
 * [BLIP: Bootstrapping Language-Image Pre-training for Unified Vision-Language Understanding and Generation](https://arxiv.org/abs/2201.12086)
-* [UIT-ViIC: A Dataset for Vietnamese Image Captioning](https://arxiv.org/abs/2005.00392)
+* [UIT-ViIC: A Dataset for Vietnamese Image Captioning (Paper)](https://doi.org/10.1007/978-3-030-63007-2_62)
+* [Tập dữ liệu UIT-ViIC trên Kaggle](https://www.kaggle.com/datasets/leo040802/uitvic-dataset)
 * [Hugging Face Transformers](https://huggingface.co/docs/transformers/index)
 
 ## ✍️ Tác giả
