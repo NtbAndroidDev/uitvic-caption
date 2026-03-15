@@ -1,0 +1,20 @@
+model:
+  name: "VietAI/vit5-base"
+
+data:
+  train_pairs: "data/stage2_pairs.jsonl"
+  max_source_length: 64
+  max_target_length: 64
+  batch_size: 16
+  num_workers: 4
+
+training:
+  num_epochs: 3
+  lr: 5e-5
+  weight_decay: 0.01
+  device: "auto"   # dùng mps/cuda/cpu giống bên BLIP
+  grad_clip: 1.0
+
+logging:
+  ckpt_dir: "outputs/stage2_checkpoints"
+  log_every: 100
