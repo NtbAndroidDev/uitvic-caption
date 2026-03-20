@@ -1,0 +1,14 @@
+torch
+torchvision
+transformers
+pillow
+pyyaml
+fastapi
+uvicorn
+python-multipart
+pydantic
+tqdm
+pandas
+pycocoevalcap
+sentencepiece
+accelerate
