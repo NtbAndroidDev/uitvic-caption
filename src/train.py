@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup
 
-from dataset import UITViCCOCODataset
-from models.blip_captioner import BlipViCaptioner
-from utils.helpers import load_config, save_checkpoint
-from utils.seed import set_seed
+from .dataset import UITViCCOCODataset
+from .models.blip_captioner import BlipViCaptioner
+from .utils.helpers import load_config, save_checkpoint
+from .utils.seed import set_seed
 
 
 def train(config_path: str):

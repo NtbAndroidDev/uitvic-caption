@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, get_linear_schedule_with_warmup
 
-from stage2_dataset import TextCorrectionDataset
-from utils.helpers import load_config, save_checkpoint
-from utils.seed import set_seed
+from .stage2_dataset import TextCorrectionDataset
+from .utils.helpers import load_config, save_checkpoint
+from .utils.seed import set_seed
 
 
 def choose_device(cfg_device: str):
