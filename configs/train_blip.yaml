@@ -2,10 +2,10 @@ model:
   name: "Salesforce/blip-image-captioning-base"
 
 data:
-  train_json: "data/train.json"
-  val_json:   "data/val.json"
-  train_image_root: "data/images"
-  val_image_root:   "data/images"
+  train_json: "data/uitvic_dataset/uitvic_captions_train_new.json"
+  val_json:   "data/uitvic_dataset/uitvic_captions_val2017.json"
+  train_image_root: "data/uitvic_dataset/coco_uitvic_train/coco_uitvic_train"
+  val_image_root:   "data/uitvic_dataset/coco_uitvic_train/coco_uitvic_train"
 
   max_length: 40
   batch_size: 8
