@@ -9,6 +9,8 @@ python-multipart
 pydantic
 tqdm
 pandas
+unidecode
+nltk
 pycocoevalcap
 sentencepiece
 accelerate
