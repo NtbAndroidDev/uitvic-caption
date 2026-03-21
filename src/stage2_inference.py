@@ -1,6 +1,6 @@
 # src/stage2_inference.py
 import torch
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import T5Tokenizer, AutoModelForSeq2SeqLM
 
 from .utils.helpers import load_config
 
@@ -22,7 +22,7 @@ class CaptionFixer:
 
         model_name = cfg["model"]["name"]
         print(f"[Stage2] Loading tokenizer & model: {model_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        self.tokenizer = T5Tokenizer.from_pretrained(model_name)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self.device)
 
         print(f"[Stage2] Loading checkpoint from {ckpt_path}")
