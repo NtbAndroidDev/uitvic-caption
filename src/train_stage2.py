@@ -1,46 +1,66 @@
 import os
 import json
+import csv
 import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, get_linear_schedule_with_warmup
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 from .stage2_dataset import TextCorrectionDataset
 from .utils.helpers import load_config, save_checkpoint
 from .utils.seed import set_seed
 
+def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
+    """
+    Tính điểm BLEU-4 cho ViT5 trên tập Validation.
+    """
+    model.eval()
+    references = []
+    hypotheses = []
+    
+    print(f"[EVAL] Evaluating ViT5 on {max_samples} samples...")
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader):
+            if i >= max_samples // dataloader.batch_size:
+                break
+            
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            
+            # Generate corrected captions
+            outputs = model.generate(input_ids=input_ids, attention_mask=attention_mask, max_length=64)
+            preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            
+            # Ground truth
+            labels = batch["labels"]
+            labels[labels == -100] = tokenizer.pad_token_id
+            gt = tokenizer.batch_decode(labels, skip_special_tokens=True)
+            
+            for p, g in zip(preds, gt):
+                hypotheses.append(p.strip().split())
+                references.append([g.strip().split()])
 
-def choose_device(cfg_device: str):
-    if cfg_device == "auto":
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-        elif torch.cuda.is_available():
-            return torch.device("cuda")
-        else:
-            return torch.device("cpu")
-    else:
-        return torch.device(cfg_device)
-
+    smooth = SmoothingFunction().method1
+    bleu4 = corpus_bleu(references, hypotheses, smoothing_function=smooth)
+    return bleu4
 
 def train_stage2(config_path: str):
     cfg = load_config(config_path)
     set_seed(42)
-
-    device = choose_device(cfg["training"]["device"])
-    print("Stage2 device:", device)
+    
+    # Choose device
+    if cfg["training"]["device"] == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(cfg["training"]["device"])
+        
+    print(f"[STAGE 2] Training ViT5 on device: {device}")
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["name"])
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg["model"]["name"]).to(device)
 
-    # nếu có init_ckpt thì load trọng số từ checkpoint cũ
-    init_ckpt = cfg["training"].get("init_ckpt", None)
-    if init_ckpt and os.path.exists(init_ckpt):
-        print(f"[Stage2] Loading initial weights from {init_ckpt}")
-        state = torch.load(init_ckpt, map_location=device)
-        model.load_state_dict(state["model_state_dict"])
-    elif init_ckpt:
-        print(f"[WARNING] Initial checkpoint {init_ckpt} not found. Starting from scratch.")
-
+    # Load pairs dataset
     full_dataset = TextCorrectionDataset(
         cfg["data"]["train_pairs"],
         tokenizer,
@@ -48,122 +68,90 @@ def train_stage2(config_path: str):
         cfg["data"]["max_target_length"],
     )
     
-    # Split dataset into train (90%) and val (10%)
+    # Split 90/10
     train_size = int(0.9 * len(full_dataset))
     val_size = len(full_dataset) - train_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
     
-    print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
+    train_loader = DataLoader(train_dataset, batch_size=cfg["data"]["batch_size"], shuffle=True, num_workers=cfg["data"]["num_workers"])
+    val_loader = DataLoader(val_dataset, batch_size=cfg["data"]["batch_size"], shuffle=False, num_workers=cfg["data"]["num_workers"])
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg["data"]["batch_size"],
-        shuffle=True,
-        num_workers=cfg["data"]["num_workers"],
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg["data"]["batch_size"],
-        shuffle=False,
-        num_workers=cfg["data"]["num_workers"],
-    )
-
-    lr = float(cfg["training"]["lr"])
-    wd = float(cfg["training"]["weight_decay"])
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
-
+    optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]), weight_decay=float(cfg["training"]["weight_decay"]))
     num_training_steps = cfg["training"]["num_epochs"] * len(train_loader)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(0.1 * num_training_steps),
-        num_training_steps=num_training_steps,
-    )
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps)
 
-    model.train()
-    global_step = 0
-    
-    # History tracking
-    history = {'train_loss': [], 'val_loss': []}
+    history = {'train_loss': [], 'val_loss': [], 'val_bleu4': []}
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
     
     for epoch in range(1, cfg["training"]["num_epochs"] + 1):
-        print(f"\n=== Stage2 Epoch {epoch}/{cfg['training']['num_epochs']} ===")
-        running_loss = 0.0
+        print(f"\n=== Stage 2 Epoch {epoch}/{cfg['training']['num_epochs']} ===")
+        model.train()
         epoch_train_loss = 0.0
         
-        model.train()
         for i, batch in enumerate(train_loader, start=1):
             batch = {k: v.to(device) for k, v in batch.items()}
-
             outputs = model(**batch)
             loss = outputs.loss
-
+            
             optimizer.zero_grad()
             loss.backward()
-
-            if cfg["training"]["grad_clip"] is not None:
+            if cfg["training"]["grad_clip"]:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["training"]["grad_clip"])
-
             optimizer.step()
             scheduler.step()
-
-            loss_val = loss.item()
-            running_loss += loss_val
-            epoch_train_loss += loss_val
-            global_step += 1
-
+            
+            epoch_train_loss += loss.item()
             if i % cfg["logging"]["log_every"] == 0:
-                avg_loss = running_loss / cfg["logging"]["log_every"]
-                print(f"Step {i}/{len(train_loader)}, loss: {avg_loss:.4f}")
-                running_loss = 0.0
+                print(f"Step [{i}/{len(train_loader)}], Loss: {loss.item():.4f}")
 
-        # Calculate average train loss
-        avg_train_loss = epoch_train_loss / len(train_loader)
-        
-        # Validation Loop
-        print("Running validation...")
+        # Validation
         model.eval()
         epoch_val_loss = 0.0
         with torch.no_grad():
             for batch in val_loader:
                 batch = {k: v.to(device) for k, v in batch.items()}
-                outputs = model(**batch)
-                epoch_val_loss += outputs.loss.item()
+                epoch_val_loss += model(**batch).loss.item()
         
+        avg_train_loss = epoch_train_loss / len(train_loader)
         avg_val_loss = epoch_val_loss / len(val_loader)
-        print(f"Epoch {epoch} Summary: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}")
+        bleu4 = evaluate_bleu(model, val_loader, tokenizer, device)
         
         # Update history
         history['train_loss'].append(avg_train_loss)
         history['val_loss'].append(avg_val_loss)
+        history['val_bleu4'].append(bleu4)
         
-        # Save history
-        history_path = os.path.join(ckpt_dir, "history.json")
-        with open(history_path, "w") as f:
-            json.dump(history, f, indent=2)
+        # Save CSV Report (FOR THE USER REPORT)
+        csv_path = os.path.join(ckpt_dir, "stage2_metrics.csv")
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Epoch", "Train_Loss", "Val_Loss", "Val_BLEU4"])
+            for e in range(len(history['train_loss'])):
+                writer.writerow([e+1, history['train_loss'][e], history['val_loss'][e], history['val_bleu4'][e]])
 
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
         
-        # Plotting
+        # Save Chart
         plt.figure(figsize=(10, 5))
-        plt.plot(range(1, len(history['train_loss']) + 1), history['train_loss'], label='Train Loss')
-        plt.plot(range(1, len(history['val_loss']) + 1), history['val_loss'], label='Val Loss')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.title('Stage 2 Training and Validation Loss')
+        plt.subplot(1, 2, 1)
+        plt.plot(history['train_loss'], label='Train Loss')
+        plt.plot(history['val_loss'], label='Val Loss')
+        plt.title('Loss History')
         plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(ckpt_dir, "loss_chart.png"))
+        plt.subplot(1, 2, 2)
+        plt.plot(history['val_bleu4'], label='BLEU-4', color='green')
+        plt.title('Validation BLEU-4')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(ckpt_dir, "stage2_report.png"))
         plt.close()
-        print(f"Saved loss chart to {os.path.join(ckpt_dir, 'loss_chart.png')}")
-
+        
+        print(f"[REPORT] Epoch {epoch}: Train Loss {avg_train_loss:.4f}, Val Loss {avg_val_loss:.4f}, BLEU-4 {bleu4:.4f}")
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/stage2_vit5.yaml")
     args = parser.parse_args()
-
     train_stage2(args.config)
