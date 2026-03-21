@@ -22,7 +22,7 @@ class CaptionFixer:
 
         model_name = cfg["model"]["name"]
         print(f"[Stage2] Loading tokenizer & model: {model_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self.device)
 
         print(f"[Stage2] Loading checkpoint from {ckpt_path}")
