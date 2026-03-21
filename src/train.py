@@ -1,183 +1,177 @@
-# src/train.py
 import os
 import json
+import csv
 import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 from .dataset import UITViCCOCODataset
 from .models.blip_captioner import BlipViCaptioner
-from .utils.helpers import load_config, save_checkpoint
+from .utils.helpers import load_config, save_checkpoint, load_checkpoint
 from .utils.seed import set_seed
 
+def evaluate_metrics(model, dataloader, processor, device, max_samples=100):
+    """
+    Tính toán các chỉ số BLEU-1, 2, 3, 4 cho tập Validation.
+    """
+    model.eval()
+    references = []
+    hypotheses = []
+    
+    print(f"[EVAL] Evaluating on {max_samples} samples...")
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader):
+            if i >= max_samples // dataloader.batch_size:
+                break
+                
+            pixel_values = batch["pixel_values"].to(device)
+            # Generate captions
+            generated_ids = model.generate(pixel_values=pixel_values, max_length=50)
+            preds = processor.batch_decode(generated_ids, skip_special_tokens=True)
+            
+            # Ground truth
+            labels = batch["labels"]
+            labels[labels == -100] = processor.tokenizer.pad_token_id
+            gt = processor.batch_decode(labels, skip_special_tokens=True)
+            
+            # Chuẩn bị dữ liệu cho corpus_bleu
+            for p, g in zip(preds, gt):
+                hypotheses.append(p.strip().split())
+                references.append([g.strip().split()])
+
+    smooth = SmoothingFunction().method1
+    b1 = corpus_bleu(references, hypotheses, weights=(1, 0, 0, 0), smoothing_function=smooth)
+    b2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0), smoothing_function=smooth)
+    b3 = corpus_bleu(references, hypotheses, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smooth)
+    b4 = corpus_bleu(references, hypotheses, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smooth)
+    
+    return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4}
 
 def train(config_path: str):
     cfg = load_config(config_path)
     set_seed(42)
-
-    # xử lý device
-    if cfg["training"]["device"] == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if torch.backends.mps.is_available():
-            device = torch.device("mps")
-    else:
-        device = torch.device(cfg["training"]["device"])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 1. Model + processor
+    # Initialize
     captioner = BlipViCaptioner(cfg["model"]["name"])
     processor = captioner.get_processor()
     model = captioner.get_model().to(device)
-
-    # 2. Dataset & DataLoader
-    train_dataset = UITViCCOCODataset(
-        json_path=cfg["data"]["train_json"],
-        image_root=cfg["data"]["train_image_root"],
-        processor=processor,
-        max_length=cfg["data"]["max_length"],
-    )
-    val_dataset = UITViCCOCODataset(
-        json_path=cfg["data"]["val_json"],
-        image_root=cfg["data"]["val_image_root"],
-        processor=processor,
-        max_length=cfg["data"]["max_length"],
-    )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg["data"]["batch_size"],
-        shuffle=True,
-        num_workers=cfg["data"]["num_workers"],
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg["data"]["batch_size"],
-        shuffle=False,
-        num_workers=cfg["data"]["num_workers"],
-    )
-
-    # 3. Optimizer + scheduler
-    lr = float(cfg["training"]["lr"])
-    weight_decay = float(cfg["training"]["weight_decay"])
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=lr,
-        weight_decay=weight_decay,
-    )
-
-    num_training_steps = cfg["training"]["num_epochs"] * len(train_loader)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(0.1 * num_training_steps),
-        num_training_steps=num_training_steps,
-    )
-
-    model.train()
-    global_step = 0
-
-    print("Using device:", device)
-    print("Train size:", len(train_dataset), "Val size:", len(val_dataset))
-    print("Batches per epoch:", len(train_loader))
-
-    # History tracking
-    history = {'train_loss': [], 'val_loss': []}
+    
+    # Dataset & Dataloader
+    train_dataset = UITViCCOCODataset(cfg["data"]["train_json"], cfg["data"]["train_image_root"], processor, cfg["data"]["max_length"])
+    val_dataset = UITViCCOCODataset(cfg["data"]["val_json"], cfg["data"]["val_image_root"], processor, cfg["data"]["max_length"])
+    
+    train_loader = DataLoader(train_dataset, batch_size=cfg["data"]["batch_size"], shuffle=True, num_workers=cfg["data"]["num_workers"])
+    val_loader = DataLoader(val_dataset, batch_size=cfg["data"]["batch_size"], shuffle=False, num_workers=cfg["data"]["num_workers"])
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]), weight_decay=float(cfg["training"]["weight_decay"]))
+    
+    # Resume Checkpoint Logic
+    start_epoch = 1
+    history = {'train_loss': [], 'bleu1': [], 'bleu2': [], 'bleu3': [], 'bleu4': []}
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
-
-    for epoch in range(1, cfg["training"]["num_epochs"] + 1):
-        print(f"\n=== Epoch {epoch}/{cfg['training']['num_epochs']} ===")
-        running_loss = 0.0
-        epoch_train_loss = 0.0
+    
+    # Load from config checkpoint (for manual resume)
+    manual_ckpt = cfg["model"].get("checkpoint")
+    if manual_ckpt and os.path.exists(manual_ckpt):
+        start_epoch = load_checkpoint(manual_ckpt, model, optimizer, None, device) + 1
+        print(f"[RESUME] Manually resumed from {manual_ckpt} at Epoch {start_epoch}")
         
-        model.train() # Ensure model is in train mode
+    # Auto-load latest history if exists
+    history_path = os.path.join(ckpt_dir, "history.json")
+    if os.path.exists(history_path):
+        with open(history_path, "r") as f:
+            history = json.load(f)
+            start_epoch = len(history['train_loss']) + 1
+            print(f"[RESUME] History found. Starting from Epoch {start_epoch}")
+
+    num_training_steps = cfg["training"]["num_epochs"] * len(train_loader)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps)
+
+    print(f"[INFO] Starting training on {device}. Total Epochs: {cfg['training']['num_epochs']}")
+
+    for epoch in range(start_epoch, cfg["training"]["num_epochs"] + 1):
+        print(f"\n=== Epoch {epoch}/{cfg['training']['num_epochs']} ===")
+        model.train()
+        epoch_loss = 0.0
+        
         for i, batch in enumerate(train_loader, start=1):
             batch = {k: v.to(device) for k, v in batch.items()}
-
             outputs = model(
                 pixel_values=batch["pixel_values"],
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
-                labels=batch["labels"],
+                labels=batch["labels"]
             )
             loss = outputs.loss
-
+            
             optimizer.zero_grad()
             loss.backward()
-
-            if cfg["training"]["grad_clip"] is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), cfg["training"]["grad_clip"]
-                )
-
             optimizer.step()
             scheduler.step()
-
-            loss_val = loss.item()
-            running_loss += loss_val
-            epoch_train_loss += loss_val
-            global_step += 1
-
+            
+            epoch_loss += loss.item()
             if i % cfg["logging"]["log_every"] == 0:
-                avg_loss = running_loss / cfg["logging"]["log_every"]
-                print(
-                    f"Epoch [{epoch}/{cfg['training']['num_epochs']}], "
-                    f"Step [{i}/{len(train_loader)}], "
-                    f"Loss: {avg_loss:.4f}"
-                )
-                running_loss = 0.0
-
-        # Calculate average train loss for the epoch
-        avg_train_loss = epoch_train_loss / len(train_loader)
+                print(f"Step [{i}/{len(train_loader)}], Current Loss: {loss.item():.4f}")
         
-        # Validation Loop
-        print("Running validation...")
-        model.eval()
-        epoch_val_loss = 0.0
-        with torch.no_grad():
-            for batch in val_loader:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                outputs = model(
-                    pixel_values=batch["pixel_values"],
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    labels=batch["labels"],
-                )
-                epoch_val_loss += outputs.loss.item()
-        
-        avg_val_loss = epoch_val_loss / len(val_loader)
-        print(f"Epoch {epoch} Summary: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}")
+        # --- End of Epoch Evaluation ---
+        avg_train_loss = epoch_loss / len(train_loader)
+        metrics = evaluate_metrics(model, val_loader, processor, device, max_samples=200)
         
         # Update history
         history['train_loss'].append(avg_train_loss)
-        history['val_loss'].append(avg_val_loss)
+        history['bleu1'].append(metrics['bleu1'])
+        history['bleu2'].append(metrics['bleu2'])
+        history['bleu3'].append(metrics['bleu3'])
+        history['bleu4'].append(metrics['bleu4'])
         
-        # Save history to JSON
-        history_path = os.path.join(ckpt_dir, "history.json")
+        # Save JSON history
         with open(history_path, "w") as f:
             json.dump(history, f, indent=2)
-        
-        # Save checkpoint
+            
+        # Save CSV metrics (For Excel Reporting)
+        csv_path = os.path.join(ckpt_dir, "evaluation_report.csv")
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Epoch", "Train_Loss", "BLEU-1", "BLEU-2", "BLEU-3", "BLEU-4"])
+            for e in range(len(history['train_loss'])):
+                writer.writerow([
+                    e + 1, 
+                    history['train_loss'][e], 
+                    history['bleu1'][e], 
+                    history['bleu2'][e], 
+                    history['bleu3'][e], 
+                    history['bleu4'][e]
+                ])
+
+        # Save model checkpoint
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
         
-        # Plotting
-        plt.figure(figsize=(10, 5))
-        plt.plot(range(1, len(history['train_loss']) + 1), history['train_loss'], label='Train Loss')
-        plt.plot(range(1, len(history['val_loss']) + 1), history['val_loss'], label='Val Loss')
+        # Plot and save charts
+        plt.figure(figsize=(12, 5))
+        # Plot Loss
+        plt.subplot(1, 2, 1)
+        plt.plot(range(1, len(history['train_loss']) + 1), history['train_loss'], 'b-o', label='Train Loss')
+        plt.title('Training Loss')
         plt.xlabel('Epochs')
         plt.ylabel('Loss')
-        plt.title('Training and Validation Loss')
         plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(ckpt_dir, "loss_chart.png"))
+        # Plot BLEU
+        plt.subplot(1, 2, 2)
+        plt.plot(range(1, len(history['bleu4']) + 1), history['bleu4'], 'r-s', label='BLEU-4')
+        plt.title('Validation BLEU-4')
+        plt.xlabel('Epochs')
+        plt.ylabel('Score')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(ckpt_dir, "training_report.png"))
         plt.close()
-        print(f"Saved loss chart to {os.path.join(ckpt_dir, 'loss_chart.png')}")
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/train_blip.yaml")
-    args = parser.parse_args()
-
-    train(args.config)
+        
+        print(f"[REPORT] Epoch {epoch} complete. Loss: {avg_train_loss:.4f}, BLEU-4: {metrics['bleu4']:.4f}")
+        print(f"[REPORT] Results saved in {ckpt_dir}")
