@@ -1,20 +1,20 @@
 model:
-  name: "VietAI/vit5-base"
+  name: "AiaiVnduong/vit5-base-vietnamese-correction"
 
 data:
-  train_pairs: "data/stage2_pairs.jsonl"
+  train_pairs: "/kaggle/working/data/stage2_pairs.jsonl"
   max_source_length: 64
   max_target_length: 64
   batch_size: 16
-  num_workers: 4
+  num_workers: 2
 
 training:
-  num_epochs: 3
+  num_epochs: 30
   lr: 5e-5
   weight_decay: 0.01
-  device: "auto"   # dùng mps/cuda/cpu giống bên BLIP
+  device: "auto"
   grad_clip: 1.0
 
 logging:
-  ckpt_dir: "outputs/stage2_checkpoints"
+  ckpt_dir: "/kaggle/working/outputs/stage2_checkpoints"
   log_every: 100
