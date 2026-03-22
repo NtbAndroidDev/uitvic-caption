@@ -1,5 +1,5 @@
 model:
-  name: "AiaiVnduong/vit5-base-vietnamese-correction"
+  name: "VietAI/vit5-base"
 
 data:
   train_pairs: "/kaggle/working/data/stage2_pairs.jsonl"

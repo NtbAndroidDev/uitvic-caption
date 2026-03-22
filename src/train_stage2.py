@@ -57,7 +57,7 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"])
+    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], legacy=False)
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg["model"]["name"]).to(device)
 
     # Load pairs dataset
