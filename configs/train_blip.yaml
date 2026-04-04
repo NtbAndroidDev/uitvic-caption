@@ -12,8 +12,9 @@ data:
   num_workers: 2
 
 training:
-  num_epochs: 30
-  lr: 5e-5
+  num_epochs: 50
+  lr: 2e-5
+  early_stopping_patience: 5
   weight_decay: 0.01
   device: "auto"
   grad_clip: 1.0

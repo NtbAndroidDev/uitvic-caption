@@ -2,6 +2,7 @@ import os
 import json
 import csv
 import torch
+import copy
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup
@@ -89,9 +90,13 @@ def train(config_path: str):
             print(f"[RESUME] History found. Starting from Epoch {start_epoch}")
 
     num_training_steps = cfg["training"]["num_epochs"] * len(train_loader)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(0.05 * num_training_steps), num_training_steps=num_training_steps)
 
     print(f"[INFO] Starting training on {device}. Total Epochs: {cfg['training']['num_epochs']}")
+
+    best_bleu4 = 0.0
+    patience = cfg["training"].get("early_stopping_patience", 5)
+    patience_counter = 0
 
     for epoch in range(start_epoch, cfg["training"]["num_epochs"] + 1):
         print(f"\n=== Epoch {epoch}/{cfg['training']['num_epochs']} ===")
@@ -147,7 +152,20 @@ def train(config_path: str):
                     history['bleu4'][e]
                 ])
 
-        # Save model checkpoint
+        # --- Early Stopping & Best Checkpoint Logic ---
+        current_bleu4 = metrics['bleu4']
+        if current_bleu4 > best_bleu4:
+            best_bleu4 = current_bleu4
+            print(f"[EARLY STOPPING] \u2705 BLEU-4 improved to {best_bleu4:.4f}. Resetting patience.")
+            # Save the 'best' model checkpoint
+            best_ckpt_path = os.path.join(ckpt_dir, "best_model.pt")
+            torch.save(model.state_dict(), best_ckpt_path)
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            print(f"[EARLY STOPPING] \u26a0\ufe0f BLEU-4 did not improve (Best: {best_bleu4:.4f}). Patience: {patience_counter}/{patience}")
+
+        # Regular periodic save
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
         
         # Plot and save charts
@@ -175,3 +193,7 @@ def train(config_path: str):
         
         print(f"[REPORT] Epoch {epoch} complete. Loss: {avg_train_loss:.4f}, BLEU-4: {metrics['bleu4']:.4f}")
         print(f"[REPORT] Results saved in {ckpt_dir}")
+
+        if patience_counter >= patience:
+            print(f"\n[EARLY STOPPING] \ud83d\udea8 Training stopped early at epoch {epoch} as BLEU-4 didn't improve for {patience} epochs.")
+            break
