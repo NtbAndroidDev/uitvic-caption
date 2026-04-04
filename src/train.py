@@ -58,6 +58,7 @@ def evaluate_metrics(model, dataloader, processor, device, max_samples=100):
     smooth = SmoothingFunction().method1
     b1 = corpus_bleu(references, hypotheses, weights=(1, 0, 0, 0), smoothing_function=smooth)
     b2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0), smoothing_function=smooth)
+    b3 = corpus_bleu(references, hypotheses, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smooth)
     b4 = corpus_bleu(references, hypotheses, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smooth)
     
     avg_val_loss = total_val_loss / max(1, num_batches)
