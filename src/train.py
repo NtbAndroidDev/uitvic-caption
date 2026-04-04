@@ -20,6 +20,8 @@ def evaluate_metrics(model, dataloader, processor, device, max_samples=100):
     model.eval()
     references = []
     hypotheses = []
+    total_val_loss = 0.0
+    num_batches = 0
     
     print(f"[EVAL] Evaluating on {max_samples} samples...")
     with torch.no_grad():
@@ -28,6 +30,17 @@ def evaluate_metrics(model, dataloader, processor, device, max_samples=100):
                 break
                 
             pixel_values = batch["pixel_values"].to(device)
+            
+            # --- Tính Validation Loss ---
+            outputs = model(
+                pixel_values=pixel_values,
+                input_ids=batch["input_ids"].to(device),
+                attention_mask=batch.get("attention_mask", None).to(device) if "attention_mask" in batch else None,
+                labels=batch["labels"].to(device)
+            )
+            total_val_loss += outputs.loss.item()
+            num_batches += 1
+
             # Generate captions
             generated_ids = model.generate(pixel_values=pixel_values, max_length=50)
             preds = processor.batch_decode(generated_ids, skip_special_tokens=True)
@@ -45,10 +58,10 @@ def evaluate_metrics(model, dataloader, processor, device, max_samples=100):
     smooth = SmoothingFunction().method1
     b1 = corpus_bleu(references, hypotheses, weights=(1, 0, 0, 0), smoothing_function=smooth)
     b2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0), smoothing_function=smooth)
-    b3 = corpus_bleu(references, hypotheses, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smooth)
     b4 = corpus_bleu(references, hypotheses, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smooth)
     
-    return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4}
+    avg_val_loss = total_val_loss / max(1, num_batches)
+    return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4, "val_loss": avg_val_loss}
 
 def train(config_path: str):
     cfg = load_config(config_path)
@@ -71,7 +84,7 @@ def train(config_path: str):
     
     # Resume Checkpoint Logic
     start_epoch = 1
-    history = {'train_loss': [], 'bleu1': [], 'bleu2': [], 'bleu3': [], 'bleu4': []}
+    history = {'train_loss': [], 'val_loss': [], 'bleu1': [], 'bleu2': [], 'bleu3': [], 'bleu4': []}
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
     
@@ -128,6 +141,7 @@ def train(config_path: str):
         
         # Update history
         history['train_loss'].append(avg_train_loss)
+        history['val_loss'].append(metrics['val_loss'])
         history['bleu1'].append(metrics['bleu1'])
         history['bleu2'].append(metrics['bleu2'])
         history['bleu3'].append(metrics['bleu3'])
@@ -141,11 +155,12 @@ def train(config_path: str):
         csv_path = os.path.join(ckpt_dir, "evaluation_report.csv")
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["Epoch", "Train_Loss", "BLEU-1", "BLEU-2", "BLEU-3", "BLEU-4"])
+            writer.writerow(["Epoch", "Train_Loss", "Val_Loss", "BLEU-1", "BLEU-2", "BLEU-3", "BLEU-4"])
             for e in range(len(history['train_loss'])):
                 writer.writerow([
                     e + 1, 
-                    history['train_loss'][e], 
+                    history['train_loss'][e],
+                    history.get('val_loss', [0]*(e+1))[e],
                     history['bleu1'][e], 
                     history['bleu2'][e], 
                     history['bleu3'][e], 
@@ -173,7 +188,9 @@ def train(config_path: str):
         # Plot Loss
         plt.subplot(1, 2, 1)
         plt.plot(range(1, len(history['train_loss']) + 1), history['train_loss'], 'b-o', label='Train Loss')
-        plt.title('Training Loss')
+        if 'val_loss' in history and len(history['val_loss']) > 0:
+            plt.plot(range(1, len(history['val_loss']) + 1), history['val_loss'], 'g-s', label='Val Loss')
+        plt.title('Training & Validation Loss')
         plt.xlabel('Epochs')
         plt.ylabel('Loss')
         plt.legend()
