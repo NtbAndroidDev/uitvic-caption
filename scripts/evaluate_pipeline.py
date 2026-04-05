@@ -154,10 +154,8 @@ def evaluate(args):
             # Step 2: ViT5 correct caption
             corrected_captions = correct_with_vit5(blip_captions, vit5_tokenizer, vit5_model, device)
 
-            # Ground truth
-            labels = batch["labels"].clone()
-            labels[labels == -100] = blip_processor.tokenizer.pad_token_id
-            gt_captions = blip_processor.batch_decode(labels, skip_special_tokens=True)
+            # Ground truth: dùng raw string từ JSON (có dấu), KHÔNG decode qua BLIP tokenizer
+            gt_captions = batch["raw_caption"]  # list[str] có tiếng Việt đầy đủ dấu
 
             for blip_cap, corr_cap, gt_cap in zip(blip_captions, corrected_captions, gt_captions):
                 blip_refs.append(gt_cap)

@@ -49,4 +49,5 @@ class UITViCCOCODataset(Dataset):
 
         encoding = {k: v.squeeze(0) for k, v in encoding.items()}
         encoding["labels"] = encoding["input_ids"].clone()
+        encoding["raw_caption"] = sample["caption"]  # raw string có dấu từ JSON
         return encoding
