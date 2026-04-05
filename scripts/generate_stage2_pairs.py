@@ -41,7 +41,12 @@ def generate_pairs(args):
 
     # Load Stage 1 checkpoint (best_model.pt)
     print(f"[INFO] Loading Stage 1 checkpoint: {args.checkpoint}")
-    state_dict = torch.load(args.checkpoint, map_location=device)
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    # Hỗ trợ cả 2 format: state_dict thuần hoặc dict bọc ngoài
+    if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+        state_dict = ckpt["model_state_dict"]
+    else:
+        state_dict = ckpt
     model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
