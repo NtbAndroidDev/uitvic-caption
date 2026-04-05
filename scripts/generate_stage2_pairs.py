@@ -83,6 +83,9 @@ def generate_pairs(args):
 
             with torch.no_grad():
                 for step, batch in enumerate(loader, start=1):
+                    if args.max_batches > 0 and step > args.max_batches:
+                        print(f"  [{split_name}] Reached max_batches={args.max_batches}, stopping early.")
+                        break
                     pixel_values = batch["pixel_values"].to(device)
 
                     # BLIP generate ra câu "thô" (không dấu / broken Vietnamese)
@@ -129,5 +132,6 @@ if __name__ == "__main__":
     parser.add_argument("--val_images",  type=str, required=True)
     parser.add_argument("--output_path", type=str, default="data/stage2_pairs_blip.jsonl")
     parser.add_argument("--batch_size",  type=int, default=16)
+    parser.add_argument("--max_batches", type=int, default=0, help="Giới hạn số batch mỗi split khi test. 0 = chạy full.")
     args = parser.parse_args()
     generate_pairs(args)
