@@ -37,7 +37,11 @@ class TextCorrectionDataset(Dataset):
 
         input_ids = source["input_ids"].squeeze(0)
         attention_mask = source["attention_mask"].squeeze(0)
-        labels = target["input_ids"].squeeze(0)
+        labels = target["input_ids"].squeeze(0).clone()
+
+        # Mask padding tokens với -100 để model không tính loss trên padding
+        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        labels[labels == pad_id] = -100
 
         return {
             "input_ids": input_ids,
