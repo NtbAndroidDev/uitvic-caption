@@ -76,7 +76,7 @@ def generate_pairs(args):
                 dataset,
                 batch_size=args.batch_size,
                 shuffle=False,
-                num_workers=2
+                num_workers=0  # 0 để tránh deadlock trong Kaggle Notebook
             )
 
             print(f"[INFO] {split_name}: {len(dataset)} samples, {len(loader)} batches")
