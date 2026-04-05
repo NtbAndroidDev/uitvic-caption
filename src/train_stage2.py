@@ -61,13 +61,13 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_sam
                 pad_token_id=pad_id,
                 eos_token_id=eos_id,
             )
-            preds = _decode_clean(tokenizer, outputs)
+            preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            preds = [p.strip() for p in preds]
 
             if i == 0:  # Debug batch đầu tiên
-                print(f"  [DEBUG] outputs[0] token IDs: {outputs[0].tolist()[:15]}")
-                raw_dec = tokenizer.batch_decode(outputs[:1], skip_special_tokens=False)
-                print(f"  [DEBUG] raw decoded[0]: '{raw_dec[0][:80]}'")
-                print(f"  [DEBUG] _decode_clean[0]: '{preds[0]}'")
+                print(f"  [DEBUG] outputs[0] IDs: {outputs[0].tolist()[:10]}")
+                print(f"  [DEBUG] pred[0]: '{preds[0]}'")
+                print(f"  [DEBUG] gt[0]:   '{gt_strings[0]}'")
 
             if print_samples:
                 for k in range(len(preds)):
