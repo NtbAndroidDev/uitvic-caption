@@ -105,17 +105,10 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    # Load tokenizer - dùng from_pretrained để đảm bảo vocab MATCH với model
+    # Load tokenizer - T5Tokenizer.from_pretrained loads full config + Vietnamese vocab
     from transformers import T5Tokenizer
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["name"])
-        print(f"[STAGE 2] Tokenizer loaded via AutoTokenizer.from_pretrained ✓")
-    except Exception as e:
-        print(f"[STAGE 2] AutoTokenizer failed ({e}), falling back to vocab_file...")
-        from huggingface_hub import hf_hub_download
-        sp_model_path = hf_hub_download(repo_id=cfg["model"]["name"], filename="spiece.model")
-        tokenizer = T5Tokenizer(vocab_file=sp_model_path, legacy=True)
-        print(f"[STAGE 2] Tokenizer loaded via vocab_file")
+    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], use_fast=False, legacy=False)
+    print(f"[STAGE 2] Tokenizer loaded via T5Tokenizer.from_pretrained ✓")
 
     # Sanity check tokenizer
     _test = "Người đàn ông đang chơi tennis."
