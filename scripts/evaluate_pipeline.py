@@ -88,14 +88,27 @@ def correct_with_vit5(raw_captions, tokenizer, vit5_model, device, max_length=64
         truncation=True,
         max_length=max_length
     ).to(device)
+
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
+
     with torch.no_grad():
         outputs = vit5_model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             max_length=max_length,
-            num_beams=4
+            num_beams=4,
+            early_stopping=True,
+            no_repeat_ngram_size=2,
+            pad_token_id=pad_id,
+            eos_token_id=eos_id,
         )
-    return tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    # Nếu output rỗng, fallback về input gốc (BLIP caption)
+    result = []
+    for dec, raw in zip(decoded, raw_captions):
+        result.append(dec.strip() if dec.strip() else raw.strip())
+    return result
 
 
 def compute_bleu(references, hypotheses):
