@@ -13,7 +13,7 @@ from .utils.seed import set_seed
 
 def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
     """
-    Tính điểm BLEU-4 cho ViT5 trên tập Validation.
+    Tính điểm BLEU-1,2,3,4 cho ViT5 trên tập Validation.
     """
     model.eval()
     references = []
@@ -33,7 +33,7 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
             preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
             
             # Ground truth
-            labels = batch["labels"]
+            labels = batch["labels"].clone()
             labels[labels == -100] = tokenizer.pad_token_id
             gt = tokenizer.batch_decode(labels, skip_special_tokens=True)
             
@@ -42,8 +42,11 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
                 references.append([g.strip().split()])
 
     smooth = SmoothingFunction().method1
-    bleu4 = corpus_bleu(references, hypotheses, smoothing_function=smooth)
-    return bleu4
+    b1 = corpus_bleu(references, hypotheses, weights=(1,0,0,0), smoothing_function=smooth)
+    b2 = corpus_bleu(references, hypotheses, weights=(0.5,0.5,0,0), smoothing_function=smooth)
+    b3 = corpus_bleu(references, hypotheses, weights=(0.33,0.33,0.33,0), smoothing_function=smooth)
+    b4 = corpus_bleu(references, hypotheses, weights=(0.25,0.25,0.25,0.25), smoothing_function=smooth)
+    return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4}
 
 def train_stage2(config_path: str):
     cfg = load_config(config_path)
@@ -119,20 +122,21 @@ def train_stage2(config_path: str):
         
         avg_train_loss = epoch_train_loss / len(train_loader)
         avg_val_loss = epoch_val_loss / len(val_loader)
-        bleu4 = evaluate_bleu(model, val_loader, tokenizer, device)
+        bleu = evaluate_bleu(model, val_loader, tokenizer, device)
         
         # Update history
         history['train_loss'].append(avg_train_loss)
         history['val_loss'].append(avg_val_loss)
-        history['val_bleu4'].append(bleu4)
+        history['val_bleu4'].append(bleu['bleu4'])
         
         # Save CSV Report (FOR THE USER REPORT)
         csv_path = os.path.join(ckpt_dir, "stage2_metrics.csv")
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["Epoch", "Train_Loss", "Val_Loss", "Val_BLEU4"])
+            writer.writerow(["Epoch", "Train_Loss", "Val_Loss", "BLEU-1", "BLEU-2", "BLEU-3", "BLEU-4"])
             for e in range(len(history['train_loss'])):
-                writer.writerow([e+1, history['train_loss'][e], history['val_loss'][e], history['val_bleu4'][e]])
+                writer.writerow([e+1, history['train_loss'][e], history['val_loss'][e],
+                                 bleu['bleu1'], bleu['bleu2'], bleu['bleu3'], history['val_bleu4'][e]])
 
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
         
@@ -151,11 +155,11 @@ def train_stage2(config_path: str):
         plt.savefig(os.path.join(ckpt_dir, "stage2_report.png"))
         plt.close()
         
-        print(f"[REPORT] Epoch {epoch}: Train Loss {avg_train_loss:.4f}, Val Loss {avg_val_loss:.4f}, BLEU-4 {bleu4:.4f}")
+        print(f"[REPORT] Epoch {epoch}: Train Loss {avg_train_loss:.4f}, Val Loss {avg_val_loss:.4f}, BLEU-1 {bleu['bleu1']:.4f}, BLEU-2 {bleu['bleu2']:.4f}, BLEU-3 {bleu['bleu3']:.4f}, BLEU-4 {bleu['bleu4']:.4f}")
 
         # --- Early Stopping ---
-        if bleu4 > best_bleu4:
-            best_bleu4 = bleu4
+        if bleu['bleu4'] > best_bleu4:
+            best_bleu4 = bleu['bleu4']
             best_ckpt_path = os.path.join(ckpt_dir, "best_model.pt")
             torch.save(model.state_dict(), best_ckpt_path)
             patience_counter = 0
