@@ -105,10 +105,16 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    # Load tokenizer - T5Tokenizer.from_pretrained loads full config + Vietnamese vocab
+    # Fix: VietAI tokenizer.json không tương thích Python 3.12 → load từ local dir
+    import shutil
+    from huggingface_hub import hf_hub_download
     from transformers import T5Tokenizer
-    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], use_fast=False)
-    print(f"[STAGE 2] Tokenizer loaded via T5Tokenizer.from_pretrained ✓")
+    _tok_dir = "/tmp/vit5_tok"
+    os.makedirs(_tok_dir, exist_ok=True)
+    for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+        shutil.copy(hf_hub_download(cfg["model"]["name"], _f), f"{_tok_dir}/{_f}")
+    tokenizer = T5Tokenizer.from_pretrained(_tok_dir, use_fast=False)
+    print(f"[STAGE 2] Tokenizer loaded ✓")
 
     # Sanity check tokenizer
     _test = "Người đàn ông đang chơi tennis."
