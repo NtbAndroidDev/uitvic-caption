@@ -141,8 +141,10 @@ def train_stage2(config_path: str):
         epoch_train_loss = 0.0
         
         for i, batch in enumerate(train_loader, start=1):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**batch)
+            # Chỉ move tensor sang device, bỏ qua string keys
+            tensor_batch = {k: v.to(device) for k, v in batch.items()
+                            if isinstance(v, torch.Tensor)}
+            outputs = model(**tensor_batch)
             loss = outputs.loss
             
             optimizer.zero_grad()
@@ -161,8 +163,9 @@ def train_stage2(config_path: str):
         epoch_val_loss = 0.0
         with torch.no_grad():
             for batch in val_loader:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                epoch_val_loss += model(**batch).loss.item()
+                tensor_batch = {k: v.to(device) for k, v in batch.items()
+                                if isinstance(v, torch.Tensor)}
+                epoch_val_loss += model(**tensor_batch).loss.item()
         
         avg_train_loss = epoch_train_loss / len(train_loader)
         avg_val_loss = epoch_val_loss / len(val_loader)
