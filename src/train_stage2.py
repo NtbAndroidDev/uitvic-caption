@@ -18,7 +18,10 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
     model.eval()
     references = []
     hypotheses = []
-    
+
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
+
     print(f"[EVAL] Evaluating ViT5 on {max_samples} samples...")
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
@@ -29,17 +32,33 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
             attention_mask = batch["attention_mask"].to(device)
             
             # Generate corrected captions
-            outputs = model.generate(input_ids=input_ids, attention_mask=attention_mask, max_length=64)
+            outputs = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=64,
+                num_beams=4,
+                early_stopping=True,
+                no_repeat_ngram_size=2,
+                pad_token_id=pad_id,
+                eos_token_id=eos_id,
+            )
             preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
             
             # Ground truth
             labels = batch["labels"].clone()
-            labels[labels == -100] = tokenizer.pad_token_id
+            labels[labels == -100] = pad_id
             gt = tokenizer.batch_decode(labels, skip_special_tokens=True)
             
             for p, g in zip(preds, gt):
-                hypotheses.append(p.strip().split())
-                references.append([g.strip().split()])
+                p_clean = p.strip()
+                g_clean = g.strip()
+                if p_clean and g_clean:  # Bỏ qua cặp rỗng
+                    hypotheses.append(p_clean.split())
+                    references.append([g_clean.split()])
+
+    if not hypotheses:
+        print("[EVAL] Warning: No valid predictions, returning 0 scores")
+        return {"bleu1": 0.0, "bleu2": 0.0, "bleu3": 0.0, "bleu4": 0.0}
 
     smooth = SmoothingFunction().method1
     b1 = corpus_bleu(references, hypotheses, weights=(1,0,0,0), smoothing_function=smooth)
