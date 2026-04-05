@@ -29,9 +29,10 @@ def _decode_clean(tokenizer, token_ids):
 
 def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_samples=False):
     """
-    Tính điểm BLEU-1,2,3,4 cho ViT5 trên tập Validation.
-    max_samples=0: đánh giá toàn bộ dataset
-    print_samples=True: in ra tất cả cặp IN/OUT
+    Tính BLEU-1,2,3,4 cho ViT5 trên val set.
+    - GT dùng raw_clean từ dataset (tiếng Việt CÓ DẤU), không decode qua tokenizer
+    - max_samples=0: đánh giá toàn bộ dataset
+    - print_samples=True: in ra tất cả IN/OUT
     """
     model.eval()
     references = []
@@ -39,7 +40,6 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_sam
 
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
-    total_batches = len(dataloader)
 
     print(f"[EVAL] Evaluating ViT5 on {'full' if max_samples == 0 else max_samples} samples...")
     with torch.no_grad():
@@ -47,34 +47,33 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_sam
             if max_samples > 0 and i >= max_samples // dataloader.batch_size:
                 break
 
-            input_ids = batch["input_ids"].to(device)
+            input_ids      = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            gt_strings     = batch["raw_clean"]    # list[str] - CÓ DẤU
+            noisy_strings  = batch["raw_noisy"]    # list[str] - để debug
 
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_length=64,
+                min_length=3,
                 num_beams=4,
-                early_stopping=True,
-                no_repeat_ngram_size=2,
                 pad_token_id=pad_id,
                 eos_token_id=eos_id,
             )
             preds = _decode_clean(tokenizer, outputs)
 
-            labels = batch["labels"].clone()
-            labels[labels == -100] = pad_id
-            gt = _decode_clean(tokenizer, labels)
-
             if print_samples:
                 for k in range(len(preds)):
-                    print(f"  [{i * dataloader.batch_size + k + 1}] IN : {gt[k]}")
-                    print(f"       OUT: {preds[k]}")
+                    print(f"  [{i * dataloader.batch_size + k + 1}]")
+                    print(f"    BLIP: {noisy_strings[k]}")
+                    print(f"    GT  : {gt_strings[k]}")
+                    print(f"    ViT5: {preds[k]}")
 
-            for p, g in zip(preds, gt):
-                if p and g:
-                    hypotheses.append(p.split())
-                    references.append([g.split()])
+            for p, g in zip(preds, gt_strings):
+                if p.strip() and g.strip():
+                    hypotheses.append(p.strip().split())
+                    references.append([g.strip().split()])
 
     if not hypotheses:
         print("[EVAL] Warning: No valid predictions, returning 0 scores")

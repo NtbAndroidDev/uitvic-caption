@@ -47,4 +47,6 @@ class TextCorrectionDataset(Dataset):
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
+            "raw_noisy": noisy,   # raw string để debug
+            "raw_clean": clean,   # raw string có tiếng Việt CÓ DẤU để làm GT
         }
