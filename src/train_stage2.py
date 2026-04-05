@@ -65,10 +65,13 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
             labels[labels == -100] = pad_id
             gt = _decode_clean(tokenizer, labels)
 
-            # Debug: in ra cặp đầu tiên của batch đầu tiên
-            if i == 0 and len(preds) > 0:
-                print(f"  [EVAL DEBUG] pred[0]: '{preds[0]}'")
-                print(f"  [EVAL DEBUG] gt[0]  : '{gt[0]}'")
+            # Debug: in ra 5 ví dụ đầu tiên của batch đầu tiên
+            if i == 0:
+                print(f"  [EVAL SAMPLES] --- {min(5, len(preds))} ví dụ ---")
+                for k in range(min(5, len(preds))):
+                    print(f"    IN : {gt[k]}")
+                    print(f"    OUT: {preds[k]}")
+                    print()
 
             for p, g in zip(preds, gt):
                 if p and g:
