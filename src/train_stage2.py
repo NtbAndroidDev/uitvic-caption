@@ -92,7 +92,7 @@ def train_stage2(config_path: str):
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    best_bleu4 = 0.0
+    best_bleu4 = -1.0
     patience = cfg["training"].get("early_stopping_patience", 5)
     patience_counter = 0
     
