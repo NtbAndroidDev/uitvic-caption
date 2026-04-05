@@ -6,7 +6,7 @@ data:
   max_source_length: 64
   max_target_length: 64
   batch_size: 8
-  num_workers: 2
+  num_workers: 0
 
 training:
   num_epochs: 500
