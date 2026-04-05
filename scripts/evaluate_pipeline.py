@@ -166,7 +166,10 @@ def evaluate(args):
                 blip_hyps.append(blip_cap)
                 pipeline_hyps.append(corr_cap)
 
-                if len(qualitative_examples) < 10:
+                # Chỉ lấy ví dụ từ ảnh KHÁC NHAU (tránh trùng 5 caption/ảnh)
+                if len(qualitative_examples) < 10 and not any(
+                    ex["blip_output"] == blip_cap for ex in qualitative_examples
+                ):
                     qualitative_examples.append({
                         "ground_truth": gt_cap,
                         "blip_output": blip_cap,
