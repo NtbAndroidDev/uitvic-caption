@@ -83,7 +83,7 @@ def train_stage2(config_path: str):
     num_training_steps = cfg["training"]["num_epochs"] * len(train_loader)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(0.1 * num_training_steps), num_training_steps=num_training_steps)
 
-    history = {'train_loss': [], 'val_loss': [], 'val_bleu4': []}
+    history = {'train_loss': [], 'val_loss': [], 'bleu1': [], 'bleu2': [], 'bleu3': [], 'bleu4': []}
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -127,32 +127,61 @@ def train_stage2(config_path: str):
         # Update history
         history['train_loss'].append(avg_train_loss)
         history['val_loss'].append(avg_val_loss)
-        history['val_bleu4'].append(bleu['bleu4'])
+        history['bleu1'].append(bleu['bleu1'])
+        history['bleu2'].append(bleu['bleu2'])
+        history['bleu3'].append(bleu['bleu3'])
+        history['bleu4'].append(bleu['bleu4'])
         
-        # Save CSV Report (FOR THE USER REPORT)
+        # Save CSV Report
         csv_path = os.path.join(ckpt_dir, "stage2_metrics.csv")
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(["Epoch", "Train_Loss", "Val_Loss", "BLEU-1", "BLEU-2", "BLEU-3", "BLEU-4"])
             for e in range(len(history['train_loss'])):
-                writer.writerow([e+1, history['train_loss'][e], history['val_loss'][e],
-                                 bleu['bleu1'], bleu['bleu2'], bleu['bleu3'], history['val_bleu4'][e]])
+                writer.writerow([e+1,
+                                 history['train_loss'][e], history['val_loss'][e],
+                                 history['bleu1'][e], history['bleu2'][e],
+                                 history['bleu3'][e], history['bleu4'][e]])
 
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
         
-        # Save Chart
-        plt.figure(figsize=(10, 5))
-        plt.subplot(1, 2, 1)
-        plt.plot(history['train_loss'], label='Train Loss')
-        plt.plot(history['val_loss'], label='Val Loss')
-        plt.title('Loss History')
+        # Save Chart - 3 biểu đồ chuẩn báo cáo NCKH
+        epochs_range = range(1, len(history['train_loss']) + 1)
+        plt.figure(figsize=(18, 5))
+
+        # Biểu đồ 1: Train Loss vs Validation Loss
+        plt.subplot(1, 3, 1)
+        plt.plot(epochs_range, history['train_loss'], 'b-o', label='Train Loss')
+        plt.plot(epochs_range, history['val_loss'], 'r-s', label='Val Loss')
+        plt.title('Training & Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
         plt.legend()
-        plt.subplot(1, 2, 2)
-        plt.plot(history['val_bleu4'], label='BLEU-4', color='green')
+        plt.grid(True)
+
+        # Biểu đồ 2: BLEU-4
+        plt.subplot(1, 3, 2)
+        plt.plot(epochs_range, history['bleu4'], 'g-o', label='BLEU-4')
         plt.title('Validation BLEU-4')
+        plt.xlabel('Epoch')
+        plt.ylabel('Score')
         plt.legend()
+        plt.grid(True)
+
+        # Biểu đồ 3: Tất cả BLEU-1,2,3,4
+        plt.subplot(1, 3, 3)
+        plt.plot(epochs_range, history['bleu1'], label='BLEU-1')
+        plt.plot(epochs_range, history['bleu2'], label='BLEU-2')
+        plt.plot(epochs_range, history['bleu3'], label='BLEU-3')
+        plt.plot(epochs_range, history['bleu4'], label='BLEU-4')
+        plt.title('BLEU-1/2/3/4 Comparison')
+        plt.xlabel('Epoch')
+        plt.ylabel('Score')
+        plt.legend()
+        plt.grid(True)
+
         plt.tight_layout()
-        plt.savefig(os.path.join(ckpt_dir, "stage2_report.png"))
+        plt.savefig(os.path.join(ckpt_dir, "stage2_report.png"), dpi=150)
         plt.close()
         
         print(f"[REPORT] Epoch {epoch}: Train Loss {avg_train_loss:.4f}, Val Loss {avg_val_loss:.4f}, BLEU-1 {bleu['bleu1']:.4f}, BLEU-2 {bleu['bleu2']:.4f}, BLEU-3 {bleu['bleu3']:.4f}, BLEU-4 {bleu['bleu4']:.4f}")
