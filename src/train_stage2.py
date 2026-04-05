@@ -83,6 +83,10 @@ def train_stage2(config_path: str):
     history = {'train_loss': [], 'val_loss': [], 'val_bleu4': []}
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
+
+    best_bleu4 = 0.0
+    patience = cfg["training"].get("early_stopping_patience", 5)
+    patience_counter = 0
     
     for epoch in range(1, cfg["training"]["num_epochs"] + 1):
         print(f"\n=== Stage 2 Epoch {epoch}/{cfg['training']['num_epochs']} ===")
@@ -148,6 +152,22 @@ def train_stage2(config_path: str):
         plt.close()
         
         print(f"[REPORT] Epoch {epoch}: Train Loss {avg_train_loss:.4f}, Val Loss {avg_val_loss:.4f}, BLEU-4 {bleu4:.4f}")
+
+        # --- Early Stopping ---
+        if bleu4 > best_bleu4:
+            best_bleu4 = bleu4
+            best_ckpt_path = os.path.join(ckpt_dir, "best_model.pt")
+            torch.save(model.state_dict(), best_ckpt_path)
+            patience_counter = 0
+            print(f"[EARLY STOPPING] (+) BLEU-4 improved to {best_bleu4:.4f}. Best model saved.")
+        else:
+            patience_counter += 1
+            print(f"[EARLY STOPPING] (-) BLEU-4 did not improve (Best: {best_bleu4:.4f}). Patience: {patience_counter}/{patience}")
+
+        if patience_counter >= patience:
+            print(f"[EARLY STOPPING] *** Training stopped early at epoch {epoch}. ***")
+            break
+
 
 if __name__ == "__main__":
     import argparse

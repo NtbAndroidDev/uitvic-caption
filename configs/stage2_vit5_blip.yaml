@@ -5,17 +5,16 @@ data:
   train_pairs: "data/stage2_pairs_blip.jsonl"
   max_source_length: 64
   max_target_length: 64
-  batch_size: 8       # caption BLIP dài hơn, để 8 cho an toàn
-  num_workers: 4
+  batch_size: 8
+  num_workers: 2
 
 training:
-  num_epochs: 2       # fine-tune thêm 2 epoch là đủ
-  lr: 3e-5            # nhỏ hơn 5e-5 một chút
+  num_epochs: 500
+  lr: 2e-5
+  early_stopping_patience: 5
   weight_decay: 0.01
   device: "auto"
   grad_clip: 1.0
-  # dùng checkpoint Stage2 cũ làm điểm khởi đầu
-  init_ckpt: "outputs/stage2_checkpoints/blip_epoch_3.pt"
 
 logging:
   ckpt_dir: "outputs/stage2_checkpoints_blip"
