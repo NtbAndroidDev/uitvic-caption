@@ -172,14 +172,14 @@ def train(config_path: str):
         current_bleu4 = metrics['bleu4']
         if current_bleu4 > best_bleu4:
             best_bleu4 = current_bleu4
-            print(f"[EARLY STOPPING] \u2705 BLEU-4 improved to {best_bleu4:.4f}. Resetting patience.")
+            print(f"[EARLY STOPPING] (+) BLEU-4 improved to {best_bleu4:.4f}. Resetting patience.")
             # Save the 'best' model checkpoint
             best_ckpt_path = os.path.join(ckpt_dir, "best_model.pt")
             torch.save(model.state_dict(), best_ckpt_path)
             patience_counter = 0
         else:
             patience_counter += 1
-            print(f"[EARLY STOPPING] \u26a0\ufe0f BLEU-4 did not improve (Best: {best_bleu4:.4f}). Patience: {patience_counter}/{patience}")
+            print(f"[EARLY STOPPING] (-) BLEU-4 did not improve (Best: {best_bleu4:.4f}). Patience: {patience_counter}/{patience}")
 
         # Regular periodic save
         save_checkpoint(model, optimizer, epoch, ckpt_dir)
@@ -213,5 +213,5 @@ def train(config_path: str):
         print(f"[REPORT] Results saved in {ckpt_dir}")
 
         if patience_counter >= patience:
-            print(f"\n[EARLY STOPPING] \ud83d\udea8 Training stopped early at epoch {epoch} as BLEU-4 didn't improve for {patience} epochs.")
+            print(f"\n[EARLY STOPPING] *** Training stopped early at epoch {epoch} as BLEU-4 didn't improve for {patience} epochs. ***")
             break
