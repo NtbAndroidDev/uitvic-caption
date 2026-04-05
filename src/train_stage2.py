@@ -27,9 +27,11 @@ def _decode_clean(tokenizer, token_ids):
     return result
 
 
-def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
+def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_samples=False):
     """
     Tính điểm BLEU-1,2,3,4 cho ViT5 trên tập Validation.
+    max_samples=0: đánh giá toàn bộ dataset
+    print_samples=True: in ra tất cả cặp IN/OUT
     """
     model.eval()
     references = []
@@ -37,17 +39,17 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
 
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
+    total_batches = len(dataloader)
 
-    print(f"[EVAL] Evaluating ViT5 on {max_samples} samples...")
+    print(f"[EVAL] Evaluating ViT5 on {'full' if max_samples == 0 else max_samples} samples...")
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
-            if i >= max_samples // dataloader.batch_size:
+            if max_samples > 0 and i >= max_samples // dataloader.batch_size:
                 break
 
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
 
-            # Generate corrected captions
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -60,18 +62,14 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
             )
             preds = _decode_clean(tokenizer, outputs)
 
-            # Ground truth
             labels = batch["labels"].clone()
             labels[labels == -100] = pad_id
             gt = _decode_clean(tokenizer, labels)
 
-            # Debug: in ra 5 ví dụ đầu tiên của batch đầu tiên
-            if i == 0:
-                print(f"  [EVAL SAMPLES] --- {min(5, len(preds))} ví dụ ---")
-                for k in range(min(5, len(preds))):
-                    print(f"    IN : {gt[k]}")
-                    print(f"    OUT: {preds[k]}")
-                    print()
+            if print_samples:
+                for k in range(len(preds)):
+                    print(f"  [{i * dataloader.batch_size + k + 1}] IN : {gt[k]}")
+                    print(f"       OUT: {preds[k]}")
 
             for p, g in zip(preds, gt):
                 if p and g:
@@ -88,6 +86,7 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
     b3 = corpus_bleu(references, hypotheses, weights=(0.33,0.33,0.33,0), smoothing_function=smooth)
     b4 = corpus_bleu(references, hypotheses, weights=(0.25,0.25,0.25,0.25), smoothing_function=smooth)
     return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4}
+
 
 def train_stage2(config_path: str):
     cfg = load_config(config_path)
@@ -168,7 +167,9 @@ def train_stage2(config_path: str):
         
         avg_train_loss = epoch_train_loss / len(train_loader)
         avg_val_loss = epoch_val_loss / len(val_loader)
-        bleu = evaluate_bleu(model, val_loader, tokenizer, device)
+        bleu = evaluate_bleu(model, val_loader, tokenizer, device,
+                             max_samples=0, print_samples=(epoch == 1))
+
         
         # Update history
         history['train_loss'].append(avg_train_loss)
