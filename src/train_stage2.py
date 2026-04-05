@@ -107,7 +107,7 @@ def train_stage2(config_path: str):
 
     # Load tokenizer - T5Tokenizer.from_pretrained loads full config + Vietnamese vocab
     from transformers import T5Tokenizer
-    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], use_fast=False, legacy=False)
+    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], use_fast=False)
     print(f"[STAGE 2] Tokenizer loaded via T5Tokenizer.from_pretrained ✓")
 
     # Sanity check tokenizer
