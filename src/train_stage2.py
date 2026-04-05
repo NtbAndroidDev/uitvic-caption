@@ -60,7 +60,12 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["name"], use_fast=False)
+    # Load tokenizer qua sentencepiece trực tiếp để tránh bug KeyError: 0
+    # trên Python 3.12 với VietAI/vit5-base
+    from huggingface_hub import hf_hub_download
+    from transformers import T5Tokenizer
+    sp_model_path = hf_hub_download(repo_id=cfg["model"]["name"], filename="spiece.model")
+    tokenizer = T5Tokenizer(vocab_file=sp_model_path, legacy=True)
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg["model"]["name"]).to(device)
 
     # Load pairs dataset
