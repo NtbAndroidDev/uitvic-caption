@@ -189,6 +189,19 @@ def generate_pairs(args):
 
     print(f"\n[DONE] Tổng cộng {total_pairs} cặp câu (BLIP → Best GT) đã lưu vào: {args.output_path}")
 
+    # In ra 5 cặp mẫu để verify clean captions có tiếng Việt có dấu không
+    print("\n[SAMPLE] 5 cặp đầu tiên:")
+    import json as _json
+    with open(args.output_path, encoding="utf-8") as _f:
+        for i, line in enumerate(_f):
+            if i >= 5:
+                break
+            obj = _json.loads(line)
+            print(f"  noisy: {obj['noisy']}")
+            print(f"  clean: {obj['clean']}")
+            print()
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate Stage 2 training pairs (BLIP → Best-match GT)")
