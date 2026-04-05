@@ -34,14 +34,19 @@ def generate_pairs(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Device: {device}")
 
-    # Load processor + model
-    print(f"[INFO] Loading BLIP model from: {args.blip_model}")
+    # Load processor (nhẹ, chỉ tải tokenizer config)
+    print(f"[INFO] Loading BLIP processor...")
     processor = BlipProcessor.from_pretrained(args.blip_model)
-    model = BlipForConditionalGeneration.from_pretrained(args.blip_model)
 
-    # Load Stage 1 checkpoint (best_model.pt)
+    # Chỉ tải Config (vài KB) - KHÔNG tải 990MB weights từ HF
+    print(f"[INFO] Loading BLIP architecture from config only...")
+    from transformers import BlipConfig
+    config = BlipConfig.from_pretrained(args.blip_model)
+    model = BlipForConditionalGeneration(config)  # Khởi tạo rỗng, không download
+
+    # Load Stage 1 checkpoint (best_model.pt) - weights thật sự
     print(f"[INFO] Loading Stage 1 checkpoint: {args.checkpoint}")
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     # Hỗ trợ cả 2 format: state_dict thuần hoặc dict bọc ngoài
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
         state_dict = ckpt["model_state_dict"]
