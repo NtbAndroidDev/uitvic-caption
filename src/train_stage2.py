@@ -11,6 +11,22 @@ from .stage2_dataset import TextCorrectionDataset
 from .utils.helpers import load_config, save_checkpoint
 from .utils.seed import set_seed
 
+
+# ─── Helper: decode an toan de tranh skip_special_tokens over-strip ───────────
+_SPECIAL_STRS = {"<pad>", "</s>", "<s>", "<unk>", "<sep>", "<cls>",
+                 "<mask>", "<extra_id_0>"}
+
+def _decode_clean(tokenizer, token_ids):
+    """Decode token_ids dung thu cong, bo special token nhung giu text that."""
+    raw = tokenizer.batch_decode(token_ids, skip_special_tokens=False)
+    result = []
+    for text in raw:
+        for sp in _SPECIAL_STRS:
+            text = text.replace(sp, " ")
+        result.append(" ".join(text.split()))  # collapse whitespace
+    return result
+
+
 def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
     """
     Tính điểm BLEU-1,2,3,4 cho ViT5 trên tập Validation.
@@ -27,10 +43,10 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
         for i, batch in enumerate(dataloader):
             if i >= max_samples // dataloader.batch_size:
                 break
-            
+
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            
+
             # Generate corrected captions
             outputs = model.generate(
                 input_ids=input_ids,
@@ -42,19 +58,22 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=200):
                 pad_token_id=pad_id,
                 eos_token_id=eos_id,
             )
-            preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-            
+            preds = _decode_clean(tokenizer, outputs)
+
             # Ground truth
             labels = batch["labels"].clone()
             labels[labels == -100] = pad_id
-            gt = tokenizer.batch_decode(labels, skip_special_tokens=True)
-            
+            gt = _decode_clean(tokenizer, labels)
+
+            # Debug: in ra cặp đầu tiên của batch đầu tiên
+            if i == 0 and len(preds) > 0:
+                print(f"  [EVAL DEBUG] pred[0]: '{preds[0]}'")
+                print(f"  [EVAL DEBUG] gt[0]  : '{gt[0]}'")
+
             for p, g in zip(preds, gt):
-                p_clean = p.strip()
-                g_clean = g.strip()
-                if p_clean and g_clean:  # Bỏ qua cặp rỗng
-                    hypotheses.append(p_clean.split())
-                    references.append([g_clean.split()])
+                if p and g:
+                    hypotheses.append(p.split())
+                    references.append([g.split()])
 
     if not hypotheses:
         print("[EVAL] Warning: No valid predictions, returning 0 scores")
