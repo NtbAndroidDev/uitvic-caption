@@ -63,6 +63,12 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_sam
             )
             preds = _decode_clean(tokenizer, outputs)
 
+            if i == 0:  # Debug batch đầu tiên
+                print(f"  [DEBUG] outputs[0] token IDs: {outputs[0].tolist()[:15]}")
+                raw_dec = tokenizer.batch_decode(outputs[:1], skip_special_tokens=False)
+                print(f"  [DEBUG] raw decoded[0]: '{raw_dec[0][:80]}'")
+                print(f"  [DEBUG] _decode_clean[0]: '{preds[0]}'")
+
             if print_samples:
                 for k in range(len(preds)):
                     print(f"  [{i * dataloader.batch_size + k + 1}]")
@@ -99,12 +105,24 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    # Load tokenizer qua sentencepiece trực tiếp để tránh bug KeyError: 0
-    # trên Python 3.12 với VietAI/vit5-base
-    from huggingface_hub import hf_hub_download
+    # Load tokenizer - dùng from_pretrained để đảm bảo vocab MATCH với model
     from transformers import T5Tokenizer
-    sp_model_path = hf_hub_download(repo_id=cfg["model"]["name"], filename="spiece.model")
-    tokenizer = T5Tokenizer(vocab_file=sp_model_path, legacy=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["name"])
+        print(f"[STAGE 2] Tokenizer loaded via AutoTokenizer.from_pretrained ✓")
+    except Exception as e:
+        print(f"[STAGE 2] AutoTokenizer failed ({e}), falling back to vocab_file...")
+        from huggingface_hub import hf_hub_download
+        sp_model_path = hf_hub_download(repo_id=cfg["model"]["name"], filename="spiece.model")
+        tokenizer = T5Tokenizer(vocab_file=sp_model_path, legacy=True)
+        print(f"[STAGE 2] Tokenizer loaded via vocab_file")
+
+    # Sanity check tokenizer
+    _test = "Người đàn ông đang chơi tennis."
+    _enc = tokenizer(_test, return_tensors="pt")
+    _dec = tokenizer.decode(_enc["input_ids"][0], skip_special_tokens=True)
+    print(f"[STAGE 2] Tokenizer sanity check: '{_test}' → '{_dec}'")
+
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg["model"]["name"]).to(device)
 
     # Load pairs dataset
