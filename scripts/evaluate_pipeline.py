@@ -63,9 +63,13 @@ def load_blip(blip_model_name, blip_ckpt_path, device):
 
 
 def load_vit5(vit5_model_name, vit5_ckpt_path, device):
-    print("[PIPELINE] Loading ViT5 tokenizer...")
-    sp_model_path = hf_hub_download(repo_id=vit5_model_name, filename="spiece.model")
-    tokenizer = T5Tokenizer(vocab_file=sp_model_path, legacy=True)
+    print("[PIPELINE] Loading ViT5 tokenizer (local dir, skip tokenizer.json)...")
+    import shutil
+    _tok_dir = "/tmp/vit5_tok_eval"
+    os.makedirs(_tok_dir, exist_ok=True)
+    for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+        shutil.copy(hf_hub_download(repo_id=vit5_model_name, filename=_f), f"{_tok_dir}/{_f}")
+    tokenizer = T5Tokenizer.from_pretrained(_tok_dir, use_fast=False)
 
     print("[PIPELINE] Loading ViT5 model...")
     vit5 = AutoModelForSeq2SeqLM.from_pretrained(vit5_model_name)
@@ -254,6 +258,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_images", type=str, required=True)
     parser.add_argument("--output_dir",  type=str, default="outputs/evaluation")
     parser.add_argument("--batch_size",  type=int, default=8)
-    parser.add_argument("--max_samples", type=int, default=500)
+    parser.add_argument("--max_samples", type=int, default=0, help="0 = full test set")
     args = parser.parse_args()
     evaluate(args)
