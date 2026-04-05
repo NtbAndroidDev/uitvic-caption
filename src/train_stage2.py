@@ -4,7 +4,7 @@ import csv
 import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
-from transformers import T5Tokenizer, AutoModelForSeq2SeqLM, get_linear_schedule_with_warmup
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, get_linear_schedule_with_warmup
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 from .stage2_dataset import TextCorrectionDataset
@@ -60,7 +60,7 @@ def train_stage2(config_path: str):
         
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
-    tokenizer = T5Tokenizer.from_pretrained(cfg["model"]["name"], legacy=False)
+    tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["name"], use_fast=False)
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg["model"]["name"]).to(device)
 
     # Load pairs dataset
