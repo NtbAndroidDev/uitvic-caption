@@ -69,9 +69,9 @@ def evaluate_bleu(model, dataloader, tokenizer, device, max_samples=0, print_sam
                 print(f"  [DEBUG] pred[0]: '{preds[0]}'")
                 print(f"  [DEBUG] gt[0]:   '{gt_strings[0]}'")
 
-            if print_samples:
-                for k in range(len(preds)):
-                    print(f"  [{i * dataloader.batch_size + k + 1}]")
+            if print_samples and i == 0:  # Chỉ print batch đầu tiên
+                for k in range(min(4, len(preds))):
+                    print(f"  [{k + 1}]")
                     print(f"    BLIP: {noisy_strings[k]}")
                     print(f"    GT  : {gt_strings[k]}")
                     print(f"    ViT5: {preds[k]}")
