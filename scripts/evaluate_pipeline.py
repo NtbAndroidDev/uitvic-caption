@@ -67,8 +67,16 @@ def load_vit5(vit5_model_name, vit5_ckpt_path, device):
     import shutil
     _tok_dir = "/tmp/vit5_tok_eval"
     os.makedirs(_tok_dir, exist_ok=True)
-    for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
-        shutil.copy(hf_hub_download(repo_id=vit5_model_name, filename=_f), f"{_tok_dir}/{_f}")
+    if os.path.isdir(vit5_model_name):
+        # Local cache → copy trực tiếp
+        for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+            _src = os.path.join(vit5_model_name, _f)
+            if os.path.exists(_src):
+                shutil.copy(_src, f"{_tok_dir}/{_f}")
+    else:
+        # HuggingFace repo ID → download
+        for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+            shutil.copy(hf_hub_download(repo_id=vit5_model_name, filename=_f), f"{_tok_dir}/{_f}")
     tokenizer = T5Tokenizer.from_pretrained(_tok_dir, use_fast=False)
 
     print("[PIPELINE] Loading ViT5 model...")
@@ -82,6 +90,7 @@ def load_vit5(vit5_model_name, vit5_ckpt_path, device):
     vit5 = vit5.to(device).eval()
     print("[PIPELINE] ViT5 loaded!")
     return tokenizer, vit5
+
 
 
 def correct_with_vit5(raw_captions, tokenizer, vit5_model, device, max_length=64):
