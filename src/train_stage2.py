@@ -106,13 +106,23 @@ def train_stage2(config_path: str):
     print(f"[STAGE 2] Training ViT5 on device: {device}")
 
     # Fix: VietAI tokenizer.json không tương thích Python 3.12 → load từ local dir
+    # Hỗ trợ cả local path và HuggingFace repo ID
     import shutil
-    from huggingface_hub import hf_hub_download
     from transformers import T5Tokenizer
     _tok_dir = "/tmp/vit5_tok"
     os.makedirs(_tok_dir, exist_ok=True)
-    for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
-        shutil.copy(hf_hub_download(cfg["model"]["name"], _f), f"{_tok_dir}/{_f}")
+    _model_name = cfg["model"]["name"]
+    if os.path.isdir(_model_name):
+        # Local cache → copy trực tiếp
+        for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+            _src = os.path.join(_model_name, _f)
+            if os.path.exists(_src):
+                shutil.copy(_src, f"{_tok_dir}/{_f}")
+    else:
+        # HuggingFace repo ID → download
+        from huggingface_hub import hf_hub_download
+        for _f in ["spiece.model", "tokenizer_config.json", "special_tokens_map.json"]:
+            shutil.copy(hf_hub_download(_model_name, _f), f"{_tok_dir}/{_f}")
     tokenizer = T5Tokenizer.from_pretrained(_tok_dir, use_fast=False)
     print(f"[STAGE 2] Tokenizer loaded ✓")
 
