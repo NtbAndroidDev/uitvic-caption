@@ -1,0 +1,27 @@
+# Stage 2 ViT5 Config — RANDOM PAIRING VARIANT (Ablation Study)
+# Khác với stage2_vit5.yaml ở 2 chỗ:
+#   - train_pairs: dùng stage2_pairs_random.jsonl (random selection, không phải Jaccard)
+#   - ckpt_dir: lưu riêng để không đè lên checkpoint Jaccard baseline
+# Mọi hyperparameter khác GIỮ NGUYÊN để ablation công bằng.
+
+model:
+  name: "VietAI/vit5-base"
+
+data:
+  train_pairs: "/kaggle/working/data/stage2_pairs_random.jsonl"   # ← RANDOM variant
+  max_source_length: 64
+  max_target_length: 64
+  batch_size: 16
+  num_workers: 2
+
+training:
+  num_epochs: 30
+  lr: 5e-5
+  weight_decay: 0.01
+  device: "auto"
+  grad_clip: 1.0
+  early_stopping_patience: 5                                       # same as baseline
+
+logging:
+  ckpt_dir: "/kaggle/working/outputs/stage2_random_checkpoints"   # ← RANDOM variant
+  log_every: 100
