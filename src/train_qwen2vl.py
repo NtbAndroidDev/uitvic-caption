@@ -151,38 +151,60 @@ def evaluate_bleu(model, tokenizer, records: list, device: str,
 
 
 # ─── BLEU Early Stopping Callback ────────────────────────────────
+import time as _time
+
 class BLEUEarlyStoppingCallback(TrainerCallback):
-    """Evaluate BLEU-4 sau mỗi epoch, dừng nếu không cải thiện."""
+    """Evaluate BLEU-4 sau mỗi epoch, dừng nếu không cải thiện. Có Kaggle time budget guard."""
 
     def __init__(self, model, tokenizer, val_records, ckpt_dir,
-                 patience: int = 2, device: str = "cuda"):
-        self.model       = model
-        self.tokenizer   = tokenizer
-        self.val_records = val_records
-        self.ckpt_dir    = ckpt_dir
-        self.patience    = patience
-        self.device      = device
-        self.best_bleu4  = -1.0
-        self.counter     = 0
-        self.history     = []
-        self._csv_path   = os.path.join(ckpt_dir, "qwen2vl_metrics.csv")
+                 patience: int = 3, device: str = "cuda",
+                 val_eval_samples: int = 150, time_budget_hours: float = 8.5):
+        self.model            = model
+        self.tokenizer        = tokenizer
+        self.val_records      = val_records
+        self.ckpt_dir         = ckpt_dir
+        self.patience         = patience
+        self.device           = device
+        self.val_eval_samples = val_eval_samples
+        self.time_budget_hours = time_budget_hours
+        self.best_bleu4       = -1.0
+        self.counter          = 0
+        self.history          = []
+        self._csv_path        = os.path.join(ckpt_dir, "qwen2vl_metrics.csv")
+        self._start_time      = _time.time()
         os.makedirs(ckpt_dir, exist_ok=True)
         with open(self._csv_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch","BLEU-1","BLEU-2","BLEU-3","BLEU-4"])
+            csv.writer(f).writerow(["Epoch","Train_Loss","BLEU-1","BLEU-2","BLEU-3","BLEU-4"])
 
     def on_epoch_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         epoch = int(state.epoch)
+        elapsed_h = (_time.time() - self._start_time) / 3600
+
+        # Time budget guard
+        if elapsed_h >= self.time_budget_hours:
+            print(f"[TIME BUDGET] ⚠️  {elapsed_h:.1f}h ≥ {self.time_budget_hours}h limit. Auto-save & stop.")
+            best_path = os.path.join(self.ckpt_dir, "best_model")
+            if not os.path.exists(best_path):
+                self.model.save_pretrained(best_path)
+                self.tokenizer.save_pretrained(best_path)
+            control.should_training_stop = True
+            return control
+
         print_s = (epoch == 1)
         bleu = evaluate_bleu(self.model, self.tokenizer, self.val_records,
-                              self.device, print_samples=print_s)
-        self.history.append({"epoch": epoch, **bleu})
+                              self.device, print_samples=print_s,
+                              max_samples=self.val_eval_samples)
+        train_loss = state.log_history[-1].get("loss", 0.0) if state.log_history else 0.0
+        self.history.append({"epoch": epoch, "train_loss": train_loss, **bleu})
 
         print(f"[REPORT] Epoch {epoch}: "
+              f"Loss={train_loss:.4f} "
               f"BLEU-1={bleu['bleu1']:.4f} BLEU-2={bleu['bleu2']:.4f} "
-              f"BLEU-3={bleu['bleu3']:.4f} BLEU-4={bleu['bleu4']:.4f}")
+              f"BLEU-3={bleu['bleu3']:.4f} BLEU-4={bleu['bleu4']:.4f} "
+              f"| {elapsed_h:.1f}h elapsed")
 
         with open(self._csv_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, bleu["bleu1"], bleu["bleu2"],
+            csv.writer(f).writerow([epoch, train_loss, bleu["bleu1"], bleu["bleu2"],
                                     bleu["bleu3"], bleu["bleu4"]])
 
         # Save epoch checkpoint
@@ -261,7 +283,11 @@ def train(config_path: str):
     # Callbacks
     bleu_cb = BLEUEarlyStoppingCallback(
         model=model, tokenizer=tokenizer, val_records=val_records,
-        ckpt_dir=ckpt_dir, patience=tcfg["early_stopping_patience"], device=device
+        ckpt_dir=ckpt_dir,
+        patience=tcfg["early_stopping_patience"],
+        device=device,
+        val_eval_samples=tcfg.get("val_eval_samples", 150),
+        time_budget_hours=tcfg.get("time_budget_hours", 8.5),
     )
 
     # SFTConfig

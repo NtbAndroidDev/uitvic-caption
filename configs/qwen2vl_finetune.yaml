@@ -35,9 +35,10 @@ training:
   fp16: true                        # T4 không hỗ trợ bfloat16
 
   # Epochs & early stopping
-  num_epochs: 5
-  early_stopping_patience: 2       # theo BLEU-4 trên val set
-  eval_steps: 100                  # eval mỗi 100 steps
+  num_epochs: 10                   # early stopping tự dừng, 10 là upper bound
+  early_stopping_patience: 3       # chờ 3 epoch không cải thiện BLEU-4 mới dừng
+  val_eval_samples: 150            # số mẫu eval BLEU mỗi epoch (nhanh hơn full val)
+  time_budget_hours: 8.5           # Kaggle limit guard — auto-save & exit nếu gần hết giờ
 
   device: "auto"
 
