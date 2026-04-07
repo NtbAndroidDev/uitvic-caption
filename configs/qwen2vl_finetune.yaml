@@ -1,0 +1,47 @@
+# Stage 2 Qwen2-VL-7B Fine-tuning Config — UITViC Vietnamese Captioning
+# Branch: experiment/qwen2-vl
+# Method: QLoRA 4-bit via Unsloth — fits Kaggle T4 16GB
+
+model:
+  name: "unsloth/Qwen2-VL-7B-Instruct-bnb-4bit"
+  max_seq_length: 2048
+  load_in_4bit: true
+  # Fine-tune only language layers to save memory
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+
+data:
+  train_json: "/kaggle/working/data/qwen2vl_train.json"
+  val_json:   "/kaggle/working/data/qwen2vl_val.json"
+  test_json:  "/kaggle/working/data/qwen2vl_test.json"
+  max_image_size: 768   # px — bắt buộc để tránh OOM trên T4
+
+training:
+  # LoRA config
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+
+  # Optimizer
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+
+  # Batch & memory
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8   # effective batch = 8
+  fp16: true                        # T4 không hỗ trợ bfloat16
+
+  # Epochs & early stopping
+  num_epochs: 5
+  early_stopping_patience: 2       # theo BLEU-4 trên val set
+  eval_steps: 100                  # eval mỗi 100 steps
+
+  device: "auto"
+
+logging:
+  ckpt_dir: "/kaggle/working/outputs/qwen2vl_checkpoints"
+  log_every: 50
+  output_dir: "/kaggle/working/outputs/eval_qwen2vl"
