@@ -1,93 +1,110 @@
 #!/usr/bin/env python3
 """
-train_qwen2vl.py
-Fine-tune Qwen2-VL-7B trên UIT-ViIC dataset với QLoRA 4-bit via Unsloth.
+train_qwen2vl.py — Qwen2-VL-7B QLoRA Fine-tuning (Unsloth)
 Usage: python -m src.train_qwen2vl --config configs/qwen2vl_finetune.yaml
 """
 import os, json, csv, argparse, random
 import torch
 import numpy as np
 from pathlib import Path
-
-try:
-    from unsloth import FastVisionModel, is_bf16_supported
-    UNSLOTH_AVAILABLE = True
-except ImportError:
-    UNSLOTH_AVAILABLE = False
-    print("[WARN] Unsloth not available — install: pip install unsloth[kaggle-new]")
-
-from transformers import TrainingArguments, TrainerCallback
-from trl import SFTTrainer
 from PIL import Image
 
+try:
+    from unsloth import FastVisionModel
+    from unsloth.trainer import UnslothVisionDataCollator
+    UNSLOTH = True
+except ImportError:
+    UNSLOTH = False
+    print("[WARN] Unsloth not found. Install: pip install unsloth[kaggle-new]")
 
-# ── BLEU eval ────────────────────────────────────────────────────
+from transformers import TrainerCallback, TrainerState, TrainerControl
+from trl import SFTTrainer, SFTConfig
+from datasets import Dataset as HFDataset
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 import nltk
 nltk.download("punkt", quiet=True)
 nltk.download("punkt_tab", quiet=True)
 
 
+# ─────────────────────────────────────────────────────────────────
 def load_config(path: str) -> dict:
     import yaml
     with open(path) as f:
         return yaml.safe_load(f)
 
 
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
+def set_seed(seed: int = 42):
+    random.seed(seed); np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
-# ── Dataset ───────────────────────────────────────────────────────
-class Qwen2VLDataset(torch.utils.data.Dataset):
-    def __init__(self, json_path: str, max_image_size: int = 768):
-        with open(json_path, encoding="utf-8") as f:
-            self.records = json.load(f)
-        self.max_image_size = max_image_size
-
-    def __len__(self):
-        return len(self.records)
-
-    def __getitem__(self, idx):
-        rec = self.records[idx]
-        image = Image.open(rec["image"]).convert("RGB")
-        # Resize để tiết kiệm VRAM
-        w, h = image.size
-        if max(w, h) > self.max_image_size:
-            scale = self.max_image_size / max(w, h)
-            image = image.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        caption = rec["conversations"][1]["content"]
-        gt_captions = rec.get("_gt_captions", [caption])
-        return {"image": image, "caption": caption, "gt_captions": gt_captions}
+# ─── Instruction ─────────────────────────────────────────────────
+INSTRUCTION = "Hãy viết một câu mô tả ngắn gọn hình ảnh này bằng tiếng Việt."
 
 
-# ── BLEU Evaluation ───────────────────────────────────────────────
-def evaluate_bleu(model, tokenizer, dataset, device, max_samples: int = 0,
-                  print_samples: bool = False) -> dict:
+def make_conversation(record: dict) -> dict:
+    """Convert record → Unsloth conversation format."""
+    image = Image.open(record["image"]).convert("RGB")
+    caption = record["conversations"][1]["content"]
+    return {
+        "messages": [
+            {"role": "user",      "content": [
+                {"type": "image", "image": image},
+                {"type": "text",  "text": INSTRUCTION},
+            ]},
+            {"role": "assistant", "content": caption},
+        ],
+        # Keep for BLEU evaluation
+        "_image": image,
+        "_gt_captions": record.get("_gt_captions", [caption]),
+    }
+
+
+def load_hf_dataset(json_path: str, max_image_size: int = 768):
+    """Load JSON → HuggingFace Dataset with resized images."""
+    with open(json_path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    records = []
+    for r in raw:
+        img = Image.open(r["image"]).convert("RGB")
+        w, h = img.size
+        if max(w, h) > max_image_size:
+            scale = max_image_size / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        caption = r["conversations"][1]["content"]
+        records.append({
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image", "image": img},
+                    {"type": "text",  "text": INSTRUCTION},
+                ]},
+                {"role": "assistant", "content": caption},
+            ],
+            "_image_path": r["image"],
+            "_gt_captions": r.get("_gt_captions", [caption]),
+        })
+    return records
+
+
+# ─── BLEU Evaluator ──────────────────────────────────────────────
+def evaluate_bleu(model, tokenizer, records: list, device: str,
+                  print_samples: bool = False, max_samples: int = 0) -> dict:
+    """Compute BLEU-1/2/3/4 on val/test records."""
     print(f"[EVAL] Evaluating on {'full' if max_samples == 0 else max_samples} samples...")
     FastVisionModel.for_inference(model)
     model.eval()
 
+    n = len(records) if max_samples == 0 else min(max_samples, len(records))
     hypotheses, references = [], []
-    n = len(dataset) if max_samples == 0 else min(max_samples, len(dataset))
 
     with torch.no_grad():
-        for i in range(n):
-            item = dataset[i]
-            image = item["image"]
-            gt_captions = item["gt_captions"]
-
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text",  "text": "Hãy viết một câu mô tả ngắn gọn hình ảnh này bằng tiếng Việt."},
-                ],
-            }]
+        for i, rec in enumerate(records[:n]):
+            image    = rec["_image"] if "_image" in rec else Image.open(rec["_image_path"]).convert("RGB")
+            gt_caps  = rec["_gt_captions"]
+            messages = [rec["messages"][0]]   # apenas a mensagem do usuário
 
             text = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -97,7 +114,7 @@ def evaluate_bleu(model, tokenizer, dataset, device, max_samples: int = 0,
                 padding=True, truncation=True
             ).to(device)
 
-            output_ids = model.generate(
+            out_ids = model.generate(
                 **inputs,
                 max_new_tokens=64,
                 num_beams=4,
@@ -105,22 +122,23 @@ def evaluate_bleu(model, tokenizer, dataset, device, max_samples: int = 0,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
             )
-            # Cắt phần input khỏi output
-            gen_ids = output_ids[:, inputs["input_ids"].shape[1]:]
+            # Strip input tokens
+            gen_ids = out_ids[:, inputs["input_ids"].shape[1]:]
             pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
 
             if print_samples and i < 4:
-                print(f"  [{i+1}] GT  : {gt_captions[0]}")
-                print(f"       Pred: {pred}")
+                print(f"  [{i+1}]")
+                print(f"    GT  : {gt_caps[0]}")
+                print(f"    Pred: {pred}")
 
             if pred:
                 hypotheses.append(pred.split())
-                references.append([gt.split() for gt in gt_captions])
+                references.append([g.split() for g in gt_caps])
 
     FastVisionModel.for_training(model)
 
     if not hypotheses:
-        print("[EVAL] Warning: No predictions generated")
+        print("[EVAL] ⚠️  No valid predictions!")
         return {"bleu1": 0.0, "bleu2": 0.0, "bleu3": 0.0, "bleu4": 0.0}
 
     smooth = SmoothingFunction().method1
@@ -132,188 +150,162 @@ def evaluate_bleu(model, tokenizer, dataset, device, max_samples: int = 0,
     }
 
 
-# ── Main Training ─────────────────────────────────────────────────
+# ─── BLEU Early Stopping Callback ────────────────────────────────
+class BLEUEarlyStoppingCallback(TrainerCallback):
+    """Evaluate BLEU-4 sau mỗi epoch, dừng nếu không cải thiện."""
+
+    def __init__(self, model, tokenizer, val_records, ckpt_dir,
+                 patience: int = 2, device: str = "cuda"):
+        self.model       = model
+        self.tokenizer   = tokenizer
+        self.val_records = val_records
+        self.ckpt_dir    = ckpt_dir
+        self.patience    = patience
+        self.device      = device
+        self.best_bleu4  = -1.0
+        self.counter     = 0
+        self.history     = []
+        self._csv_path   = os.path.join(ckpt_dir, "qwen2vl_metrics.csv")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        with open(self._csv_path, "w", newline="") as f:
+            csv.writer(f).writerow(["Epoch","BLEU-1","BLEU-2","BLEU-3","BLEU-4"])
+
+    def on_epoch_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        epoch = int(state.epoch)
+        print_s = (epoch == 1)
+        bleu = evaluate_bleu(self.model, self.tokenizer, self.val_records,
+                              self.device, print_samples=print_s)
+        self.history.append({"epoch": epoch, **bleu})
+
+        print(f"[REPORT] Epoch {epoch}: "
+              f"BLEU-1={bleu['bleu1']:.4f} BLEU-2={bleu['bleu2']:.4f} "
+              f"BLEU-3={bleu['bleu3']:.4f} BLEU-4={bleu['bleu4']:.4f}")
+
+        with open(self._csv_path, "a", newline="") as f:
+            csv.writer(f).writerow([epoch, bleu["bleu1"], bleu["bleu2"],
+                                    bleu["bleu3"], bleu["bleu4"]])
+
+        # Save epoch checkpoint
+        ep_path = os.path.join(self.ckpt_dir, f"qwen2vl_epoch_{epoch}")
+        self.model.save_pretrained(ep_path)
+        self.tokenizer.save_pretrained(ep_path)
+        print(f"[SAVE] Checkpoint: {ep_path}")
+
+        # Early stopping check
+        if bleu["bleu4"] > self.best_bleu4:
+            self.best_bleu4 = bleu["bleu4"]
+            self.counter = 0
+            best_path = os.path.join(self.ckpt_dir, "best_model")
+            self.model.save_pretrained(best_path)
+            self.tokenizer.save_pretrained(best_path)
+            print(f"[EARLY STOPPING] (+) BLEU-4 improved → {self.best_bleu4:.4f}. Best saved.")
+        else:
+            self.counter += 1
+            print(f"[EARLY STOPPING] (-) No improvement (Best: {self.best_bleu4:.4f}). "
+                  f"Patience: {self.counter}/{self.patience}")
+            if self.counter >= self.patience:
+                print(f"[EARLY STOPPING] *** Stopping training. ***")
+                control.should_training_stop = True
+
+        return control
+
+
+# ─── Main ─────────────────────────────────────────────────────────
 def train(config_path: str):
-    cfg = load_config(config_path)
+    assert UNSLOTH, "Install Unsloth: pip install unsloth[kaggle-new]"
+    cfg  = load_config(config_path)
     set_seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[TRAIN] Device: {device}")
-    assert UNSLOTH_AVAILABLE, "Unsloth required: pip install unsloth[kaggle-new]"
 
-    # Load model
+    # Load model + LoRA
     print(f"[TRAIN] Loading {cfg['model']['name']}...")
     model, tokenizer = FastVisionModel.from_pretrained(
-        model_name     = cfg["model"]["name"],
-        max_seq_length = cfg["model"]["max_seq_length"],
-        load_in_4bit   = cfg["model"]["load_in_4bit"],
+        model_name              = cfg["model"]["name"],
+        max_seq_length          = cfg["model"]["max_seq_length"],
+        load_in_4bit            = cfg["model"]["load_in_4bit"],
+        use_gradient_checkpointing = "unsloth",
     )
-
-    # Add LoRA adapters
     model = FastVisionModel.get_peft_model(
         model,
         finetune_vision_layers     = cfg["model"]["finetune_vision_layers"],
         finetune_language_layers   = cfg["model"]["finetune_language_layers"],
         finetune_attention_modules = cfg["model"]["finetune_attention_modules"],
         finetune_mlp_modules       = cfg["model"]["finetune_mlp_modules"],
-        r           = cfg["training"]["lora_rank"],
-        lora_alpha  = cfg["training"]["lora_alpha"],
-        lora_dropout= cfg["training"]["lora_dropout"],
+        r            = cfg["training"]["lora_rank"],
+        lora_alpha   = cfg["training"]["lora_alpha"],
+        lora_dropout = cfg["training"]["lora_dropout"],
+        use_gradient_checkpointing = "unsloth",
     )
-    print("[TRAIN] LoRA adapters applied ✓")
+    print("[TRAIN] Model + LoRA ready ✓")
 
-    # Datasets
-    tcfg = cfg["training"]
-    dcfg = cfg["data"]
-    max_img = dcfg.get("max_image_size", 768)
-    train_ds = Qwen2VLDataset(dcfg["train_json"], max_img)
-    val_ds   = Qwen2VLDataset(dcfg["val_json"],   max_img)
-    test_ds  = Qwen2VLDataset(dcfg["test_json"],  max_img)
-    print(f"[TRAIN] Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)}")
-
+    # Load datasets
+    dcfg     = cfg["data"]
+    max_img  = dcfg.get("max_image_size", 768)
+    tcfg     = cfg["training"]
     ckpt_dir = cfg["logging"]["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # ── Collate fn for SFTTrainer ────────────────────────────────
-    def collate_fn(batch):
-        messages_list = []
-        for item in batch:
-            messages_list.append([{
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": item["image"]},
-                    {"type": "text",  "text": "Hãy viết một câu mô tả ngắn gọn hình ảnh này bằng tiếng Việt."},
-                ],
-            }, {
-                "role": "assistant",
-                "content": item["caption"],
-            }])
+    print("[TRAIN] Loading datasets...")
+    train_records = load_hf_dataset(dcfg["train_json"], max_img)
+    val_records   = load_hf_dataset(dcfg["val_json"],   max_img)
+    print(f"  Train: {len(train_records)} | Val: {len(val_records)}")
 
-        texts = [
-            tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-            for msgs in messages_list
-        ]
-        images = [item["image"] for item in batch]
-        inputs = tokenizer(
-            texts, images=images, return_tensors="pt",
-            padding=True, truncation=True,
-            max_length=cfg["model"]["max_seq_length"]
-        )
-        inputs["labels"] = inputs["input_ids"].clone()
-        return inputs
+    # Convert to HFDataset (SFTTrainer format)
+    def to_hf(records):
+        return HFDataset.from_list([{"messages": r["messages"]} for r in records])
 
-    # Training args
-    args = TrainingArguments(
+    train_ds = to_hf(train_records)
+    print(f"[TRAIN] HF Dataset ready: {len(train_ds)} train samples")
+
+    # Callbacks
+    bleu_cb = BLEUEarlyStoppingCallback(
+        model=model, tokenizer=tokenizer, val_records=val_records,
+        ckpt_dir=ckpt_dir, patience=tcfg["early_stopping_patience"], device=device
+    )
+
+    # SFTConfig
+    sft_args = SFTConfig(
         output_dir                  = ckpt_dir,
         num_train_epochs            = tcfg["num_epochs"],
         per_device_train_batch_size = tcfg["per_device_train_batch_size"],
         gradient_accumulation_steps = tcfg["gradient_accumulation_steps"],
-        learning_rate               = tcfg["learning_rate"],
+        learning_rate               = float(tcfg["learning_rate"]),
         weight_decay                = tcfg["weight_decay"],
         warmup_ratio                = tcfg["warmup_ratio"],
-        fp16                        = tcfg.get("fp16", True),
-        bf16                        = False,
+        fp16                        = not torch.cuda.is_bf16_supported(),
+        bf16                        = torch.cuda.is_bf16_supported(),
         logging_steps               = cfg["logging"]["log_every"],
-        save_strategy               = "epoch",
-        evaluation_strategy         = "no",   # manual eval per epoch
+        save_strategy               = "no",      # manual save in callback
+        evaluation_strategy         = "no",
         remove_unused_columns       = False,
         report_to                   = "none",
+        dataset_text_field          = "",
+        dataset_kwargs              = {"skip_prepare_dataset": True},
+        max_seq_length              = cfg["model"]["max_seq_length"],
         dataloader_num_workers      = 0,
     )
 
-    # ── Manual train loop với BLEU early stopping ────────────────
-    from torch.utils.data import DataLoader
-    from torch.optim import AdamW
-    from transformers import get_linear_schedule_with_warmup
-
-    train_loader = DataLoader(train_ds, batch_size=tcfg["per_device_train_batch_size"],
-                              shuffle=True, collate_fn=collate_fn, num_workers=0)
-
-    n_steps = len(train_loader) * tcfg["num_epochs"] // tcfg["gradient_accumulation_steps"]
-    optimizer = AdamW(model.parameters(), lr=tcfg["learning_rate"],
-                      weight_decay=tcfg["weight_decay"])
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(tcfg["warmup_ratio"] * n_steps),
-        num_training_steps=n_steps
+    trainer = SFTTrainer(
+        model         = model,
+        tokenizer     = tokenizer,
+        data_collator = UnslothVisionDataCollator(model, tokenizer),
+        train_dataset = train_ds,
+        args          = sft_args,
+        callbacks     = [bleu_cb],
     )
 
-    history = {"epoch": [], "train_loss": [], "bleu1": [], "bleu2": [], "bleu3": [], "bleu4": []}
-    best_bleu4 = -1.0
-    patience_counter = 0
-    patience = tcfg["early_stopping_patience"]
+    trainer.train()
 
-    FastVisionModel.for_training(model)
-
-    for epoch in range(1, tcfg["num_epochs"] + 1):
-        print(f"\n=== Qwen2-VL Epoch {epoch}/{tcfg['num_epochs']} ===")
-        model.train()
-        epoch_loss = 0.0
-        optimizer.zero_grad()
-
-        for step, batch in enumerate(train_loader, 1):
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                     for k, v in batch.items()}
-            outputs = model(**batch)
-            loss = outputs.loss / tcfg["gradient_accumulation_steps"]
-            loss.backward()
-            epoch_loss += outputs.loss.item()
-
-            if step % tcfg["gradient_accumulation_steps"] == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-
-            if step % cfg["logging"]["log_every"] == 0:
-                print(f"  Step [{step}/{len(train_loader)}], Loss: {outputs.loss.item():.4f}")
-
-        avg_loss = epoch_loss / len(train_loader)
-        bleu = evaluate_bleu(model, tokenizer, val_ds, device,
-                             print_samples=(epoch == 1))
-
-        print(f"[REPORT] Epoch {epoch}: Loss={avg_loss:.4f} | "
-              f"BLEU-1={bleu['bleu1']:.4f} BLEU-2={bleu['bleu2']:.4f} "
-              f"BLEU-3={bleu['bleu3']:.4f} BLEU-4={bleu['bleu4']:.4f}")
-
-        history["epoch"].append(epoch)
-        history["train_loss"].append(avg_loss)
-        for k in ["bleu1","bleu2","bleu3","bleu4"]:
-            history[k].append(bleu[k])
-
-        # Save CSV
-        csv_path = os.path.join(ckpt_dir, "qwen2vl_metrics.csv")
-        with open(csv_path, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["Epoch","Train_Loss","BLEU-1","BLEU-2","BLEU-3","BLEU-4"])
-            for i in range(len(history["epoch"])):
-                w.writerow([history["epoch"][i], history["train_loss"][i],
-                             history["bleu1"][i], history["bleu2"][i],
-                             history["bleu3"][i], history["bleu4"][i]])
-
-        # Save checkpoint
-        ckpt_path = os.path.join(ckpt_dir, f"qwen2vl_epoch_{epoch}")
-        model.save_pretrained(ckpt_path)
-        tokenizer.save_pretrained(ckpt_path)
-        print(f"[SAVE] Checkpoint saved: {ckpt_path}")
-
-        # Early stopping
-        if bleu["bleu4"] > best_bleu4:
-            best_bleu4 = bleu["bleu4"]
-            patience_counter = 0
-            best_path = os.path.join(ckpt_dir, "best_model")
-            model.save_pretrained(best_path)
-            tokenizer.save_pretrained(best_path)
-            print(f"[EARLY STOPPING] (+) BLEU-4 improved to {best_bleu4:.4f}. Best model saved.")
-        else:
-            patience_counter += 1
-            print(f"[EARLY STOPPING] (-) BLEU-4 no improvement (Best: {best_bleu4:.4f}). "
-                  f"Patience: {patience_counter}/{patience}")
-            if patience_counter >= patience:
-                print(f"[EARLY STOPPING] *** Stopped at epoch {epoch}. ***")
-                break
-
-    best_ep = history["bleu4"].index(max(history["bleu4"])) + 1
-    print(f"\n✓ Training done | Best epoch: {best_ep} | Val BLEU-4: {max(history['bleu4']):.4f}")
+    # Summary
+    if bleu_cb.history:
+        best_ep = max(bleu_cb.history, key=lambda x: x["bleu4"])
+        print(f"\n✓ Training done | Best epoch: {best_ep['epoch']} | "
+              f"Val BLEU-4: {best_ep['bleu4']:.4f}")
+        print("\nTraining History:")
+        print(f"  {'Epoch':>5}  {'BLEU-1':>7}  {'BLEU-2':>7}  {'BLEU-3':>7}  {'BLEU-4':>7}")
+        for h in bleu_cb.history:
+            print(f"  {h['epoch']:>5}  {h['bleu1']:.4f}  {h['bleu2']:.4f}  {h['bleu3']:.4f}  {h['bleu4']:.4f}")
 
 
 def main():
