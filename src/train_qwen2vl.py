@@ -63,48 +63,63 @@ def make_conversation(record: dict) -> dict:
 
 
 def load_hf_dataset(json_path: str, max_image_size: int = 768):
-    """Load JSON → HuggingFace Dataset with resized images."""
+    """Load JSON → list of records.
+    messages内 image field lưu path string (không phải PIL) → HFDataset serialize được.
+    PIL chỉ load trong evaluate_bleu.
+    """
     with open(json_path, encoding="utf-8") as f:
         raw = json.load(f)
 
     records = []
     for r in raw:
-        img = Image.open(r["image"]).convert("RGB")
-        w, h = img.size
-        if max(w, h) > max_image_size:
-            scale = max_image_size / max(w, h)
-            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        caption = r["conversations"][1]["content"]
+        img_path = r["image"]
+        caption  = r["conversations"][1]["content"]
         records.append({
             "messages": [
                 {"role": "user", "content": [
-                    {"type": "image", "image": img},
+                    {"type": "image", "image": img_path},   # ← path string, NOT PIL
                     {"type": "text",  "text": INSTRUCTION},
                 ]},
                 {"role": "assistant", "content": caption},
             ],
-            "_image_path": r["image"],
+            "_image_path": img_path,
             "_gt_captions": r.get("_gt_captions", [caption]),
+            "_max_image_size": max_image_size,
         })
     return records
 
 
 # ─── BLEU Evaluator ──────────────────────────────────────────────
+def _load_image(rec: dict) -> Image.Image:
+    """Load + resize image from _image_path."""
+    img = Image.open(rec["_image_path"]).convert("RGB")
+    max_sz = rec.get("_max_image_size", 768)
+    w, h = img.size
+    if max(w, h) > max_sz:
+        scale = max_sz / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    return img
+
+
 def evaluate_bleu(model, tokenizer, records: list, device: str,
                   print_samples: bool = False, max_samples: int = 0) -> dict:
     """Compute BLEU-1/2/3/4 on val/test records."""
-    print(f"[EVAL] Evaluating on {'full' if max_samples == 0 else max_samples} samples...")
+    n = len(records) if max_samples == 0 else min(max_samples, len(records))
+    print(f"[EVAL] Evaluating on {n} samples...")
     FastVisionModel.for_inference(model)
     model.eval()
 
-    n = len(records) if max_samples == 0 else min(max_samples, len(records))
     hypotheses, references = [], []
 
     with torch.no_grad():
         for i, rec in enumerate(records[:n]):
-            image    = rec["_image"] if "_image" in rec else Image.open(rec["_image_path"]).convert("RGB")
-            gt_caps  = rec["_gt_captions"]
-            messages = [rec["messages"][0]]   # apenas a mensagem do usuário
+            image   = _load_image(rec)              # always load from file path
+            gt_caps = rec["_gt_captions"]
+
+            messages = [{"role": "user", "content": [
+                {"type": "image", "image": image},
+                {"type": "text",  "text": INSTRUCTION},
+            ]}]
 
             text = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -122,7 +137,6 @@ def evaluate_bleu(model, tokenizer, records: list, device: str,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
             )
-            # Strip input tokens
             gen_ids = out_ids[:, inputs["input_ids"].shape[1]:]
             pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
 
@@ -143,9 +157,9 @@ def evaluate_bleu(model, tokenizer, records: list, device: str,
 
     smooth = SmoothingFunction().method1
     return {
-        "bleu1": corpus_bleu(references, hypotheses, weights=(1,0,0,0),          smoothing_function=smooth),
-        "bleu2": corpus_bleu(references, hypotheses, weights=(0.5,0.5,0,0),       smoothing_function=smooth),
-        "bleu3": corpus_bleu(references, hypotheses, weights=(0.33,0.33,0.33,0),  smoothing_function=smooth),
+        "bleu1": corpus_bleu(references, hypotheses, weights=(1,0,0,0),           smoothing_function=smooth),
+        "bleu2": corpus_bleu(references, hypotheses, weights=(0.5,0.5,0,0),        smoothing_function=smooth),
+        "bleu3": corpus_bleu(references, hypotheses, weights=(0.33,0.33,0.33,0),   smoothing_function=smooth),
         "bleu4": corpus_bleu(references, hypotheses, weights=(0.25,0.25,0.25,0.25), smoothing_function=smooth),
     }
 
