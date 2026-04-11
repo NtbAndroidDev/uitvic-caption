@@ -14,8 +14,20 @@ try:
     from unsloth.trainer import UnslothVisionDataCollator
     UNSLOTH = True
 except ImportError:
-    UNSLOTH = False
-    print("[WARN] Unsloth not found. Install: pip install unsloth[kaggle-new]")
+    print("[INFO] Unsloth not found — installing now...", flush=True)
+    import subprocess as _sp
+    _sp.run([
+        __import__("sys").executable, "-m", "pip", "install",
+        "unsloth[kaggle-new]", "--no-deps", "-q"
+    ], check=True)
+    try:
+        from unsloth import FastVisionModel
+        from unsloth.trainer import UnslothVisionDataCollator
+        UNSLOTH = True
+        print("[INFO] Unsloth installed ✓", flush=True)
+    except ImportError:
+        UNSLOTH = False
+        print("[WARN] Unsloth still not found after install.", flush=True)
 
 from transformers import TrainerCallback, TrainerState, TrainerControl
 from trl import SFTTrainer, SFTConfig
