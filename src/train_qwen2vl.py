@@ -19,7 +19,7 @@ except ImportError:
 
 from transformers import TrainerCallback, TrainerState, TrainerControl
 from trl import SFTTrainer, SFTConfig
-from datasets import Dataset as HFDataset
+import torch.utils.data
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 import nltk
 nltk.download("punkt", quiet=True)
@@ -274,12 +274,14 @@ def train(config_path: str):
     val_records   = load_hf_dataset(dcfg["val_json"],   max_img)
     print(f"  Train: {len(train_records)} | Val: {len(val_records)}")
 
-    # Convert to HFDataset (SFTTrainer format)
-    def to_hf(records):
-        return HFDataset.from_list([{"messages": r["messages"]} for r in records])
+    # Custom Dataset — tránh pyarrow mixed-type serialization bug
+    class Qwen2VLDataset(torch.utils.data.Dataset):
+        def __init__(self, records): self.records = records
+        def __len__(self):           return len(self.records)
+        def __getitem__(self, idx):  return {"messages": self.records[idx]["messages"]}
 
-    train_ds = to_hf(train_records)
-    print(f"[TRAIN] HF Dataset ready: {len(train_ds)} train samples")
+    train_ds = Qwen2VLDataset(train_records)
+    print(f"[TRAIN] Dataset ready: {len(train_ds)} train samples")
 
     # Callbacks
     bleu_cb = BLEUEarlyStoppingCallback(
