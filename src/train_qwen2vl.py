@@ -304,8 +304,8 @@ def train(config_path: str):
         fp16                        = not torch.cuda.is_bf16_supported(),
         bf16                        = torch.cuda.is_bf16_supported(),
         logging_steps               = cfg["logging"]["log_every"],
-        save_strategy               = "no",      # manual save in callback
-        evaluation_strategy         = "no",
+        save_strategy               = "no",
+        eval_strategy               = "no",
         remove_unused_columns       = False,
         report_to                   = "none",
         dataset_text_field          = "",
