@@ -23,6 +23,12 @@ try:
 except ImportError:
     UNSLOTH = False
 
+try:
+    from qwen_vl_utils import process_vision_info
+    HAS_QWEN_VL_UTILS = True
+except ImportError:
+    HAS_QWEN_VL_UTILS = False
+
 INSTRUCTION = "Hãy viết một câu mô tả ngắn gọn hình ảnh này bằng tiếng Việt."
 
 
@@ -30,19 +36,17 @@ def load_model(model_dir: str):
     """Load best_model (LoRA adapter) for inference."""
     assert os.path.exists(model_dir), f"❌ model_dir not found: {model_dir}"
     print(f"[EVAL] Loading model from {model_dir}...", flush=True)
-
     if UNSLOTH:
         model, tokenizer = FastVisionModel.from_pretrained(
             model_dir, load_in_4bit=True
         )
         FastVisionModel.for_inference(model)
-        # 4bit models are already on GPU — do NOT call .to(device)
+        # 4bit models already on GPU — do NOT call .to(device)
     else:
         from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_dir)
         model = Qwen2VLForConditionalGeneration.from_pretrained(
-            model_dir, torch_dtype=torch.float16,
-            device_map="auto"
+            model_dir, torch_dtype=torch.float16, device_map="auto"
         )
     model.eval()
     print("[EVAL] Model loaded ✓", flush=True)
@@ -62,10 +66,18 @@ def generate_caption(model, tokenizer, image: Image.Image) -> str:
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    inputs = tokenizer(
-        text, images=[image], return_tensors="pt",
-        padding=True, truncation=True
-    ).to(device)
+    # Use process_vision_info + text as list to avoid Unsloth patch conflict
+    if HAS_QWEN_VL_UTILS:
+        image_inputs, _ = process_vision_info(messages)
+        inputs = tokenizer(
+            text=[text], images=image_inputs,
+            return_tensors="pt", padding=True,
+        ).to(device)
+    else:
+        inputs = tokenizer(
+            text=[text], images=[image],
+            return_tensors="pt", padding=True,
+        ).to(device)
 
     with torch.no_grad():
         output_ids = model.generate(
@@ -87,7 +99,6 @@ def evaluate(args):
 
     model, tokenizer = load_model(args.model_dir)
 
-    # Load test data
     with open(args.test_json, encoding="utf-8") as f:
         test_data = json.load(f)
     if args.max_samples > 0:
@@ -97,13 +108,13 @@ def evaluate(args):
     hypotheses, references = [], []
     qualitative  = []
     failed       = 0
-    log_interval = max(1, len(test_data) // 10)  # log 10 times
+    log_interval = max(1, len(test_data) // 10)
 
     for i, rec in enumerate(test_data):
         try:
             image = Image.open(rec["image"]).convert("RGB")
         except Exception as e:
-            print(f"  [WARN] Cannot open image {rec['image']}: {e}", flush=True)
+            print(f"  [WARN] Cannot open {rec['image']}: {e}", flush=True)
             failed += 1
             continue
 
@@ -116,7 +127,7 @@ def evaluate(args):
             pred = ""
 
         if not pred:
-            pred = gt_captions[0]  # fallback — tránh empty pred ảnh hưởng BLEU
+            pred = gt_captions[0]
 
         hypotheses.append(pred.split())
         references.append([gt.split() for gt in gt_captions])
@@ -128,40 +139,29 @@ def evaluate(args):
                 "qwen2vl_output": pred,
             })
 
-        # Progress — log mỗi 10% hoặc sample cuối
         if (i + 1) % log_interval == 0 or i == len(test_data) - 1:
-            print(f"  [{i+1:3d}/{len(test_data)}] latest pred: {pred[:60]}...",
-                  flush=True)
+            print(f"  [{i+1:3d}/{len(test_data)}] {pred[:70]}", flush=True)
 
-    print(f"\n[EVAL] Done. Success={len(hypotheses)}, Failed/skipped={failed}",
-          flush=True)
-
+    print(f"\n[EVAL] Success={len(hypotheses)}, Failed={failed}", flush=True)
     if not hypotheses:
-        print("❌ No valid predictions — cannot compute BLEU", flush=True)
+        print("❌ No valid predictions", flush=True)
         sys.exit(1)
 
-    # ── BLEU scores ───────────────────────────────────────────────
     smooth = SmoothingFunction().method1
-    b1 = corpus_bleu(references, hypotheses,
-                     weights=(1,0,0,0), smoothing_function=smooth)
-    b2 = corpus_bleu(references, hypotheses,
-                     weights=(0.5,0.5,0,0), smoothing_function=smooth)
-    b3 = corpus_bleu(references, hypotheses,
-                     weights=(0.33,0.33,0.33,0), smoothing_function=smooth)
-    b4 = corpus_bleu(references, hypotheses,
-                     weights=(0.25,0.25,0.25,0.25), smoothing_function=smooth)
+    b1 = corpus_bleu(references, hypotheses, weights=(1,0,0,0),            smoothing_function=smooth)
+    b2 = corpus_bleu(references, hypotheses, weights=(0.5,0.5,0,0),         smoothing_function=smooth)
+    b3 = corpus_bleu(references, hypotheses, weights=(0.33,0.33,0.33,0),    smoothing_function=smooth)
+    b4 = corpus_bleu(references, hypotheses, weights=(0.25,0.25,0.25,0.25), smoothing_function=smooth)
 
-    print(f"\n[RESULT] BLEU-1={b1:.4f} | BLEU-2={b2:.4f} | "
-          f"BLEU-3={b3:.4f} | BLEU-4={b4:.4f}", flush=True)
-    print(f"[BASELINE] BLIP+ViT5 (Jaccard): BLEU-4=0.1951", flush=True)
-    if b4 > 0.1951:
-        print(f"[RESULT] ✅ Qwen2-VL-7B vượt baseline! Δ=+{b4-0.1951:.4f}",
-              flush=True)
+    print(f"\n[RESULT] BLEU-1={b1:.4f} | BLEU-2={b2:.4f} | BLEU-3={b3:.4f} | BLEU-4={b4:.4f}", flush=True)
+    print(f"[BASELINE] BLIP+ViT5 Jaccard: BLEU-4=0.1951", flush=True)
+    delta = b4 - 0.1951
+    if delta > 0:
+        print(f"[RESULT] ✅ Qwen2-VL vượt baseline! Δ=+{delta:.4f}", flush=True)
     else:
-        print(f"[RESULT] ⚠️  Qwen2-VL-7B chưa vượt baseline. Δ={b4-0.1951:.4f}",
-              flush=True)
+        print(f"[RESULT] ⚠️  Chưa vượt baseline. Δ={delta:.4f}", flush=True)
 
-    # ── Save CSV ──────────────────────────────────────────────────
+    # Save CSV
     csv_path = os.path.join(args.output_dir, "pipeline_evaluation.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -170,16 +170,14 @@ def evaluate(args):
             ("BLEU1", 0.4552, b1), ("BLEU2", 0.3196, b2),
             ("BLEU3", 0.2493, b3), ("BLEU4", 0.1951, b4),
         ]:
-            w.writerow([metric, f"{baseline:.4f}", f"{score:.4f}",
-                        f"{score - baseline:+.4f}"])
+            w.writerow([metric, f"{baseline:.4f}", f"{score:.4f}", f"{score-baseline:+.4f}"])
     print(f"[SAVE] {csv_path}", flush=True)
 
-    # ── Save qualitative ──────────────────────────────────────────
+    # Save qualitative
     qual_path = os.path.join(args.output_dir, "qualitative_examples.json")
     with open(qual_path, "w", encoding="utf-8") as f:
         json.dump(qualitative, f, ensure_ascii=False, indent=2)
     print(f"[SAVE] {qual_path}", flush=True)
-
     print("\n✓ Evaluation done!", flush=True)
 
 

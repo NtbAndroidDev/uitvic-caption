@@ -37,6 +37,12 @@ import nltk
 nltk.download("punkt", quiet=True)
 nltk.download("punkt_tab", quiet=True)
 
+try:
+    from qwen_vl_utils import process_vision_info
+    HAS_QWEN_VL_UTILS = True
+except ImportError:
+    HAS_QWEN_VL_UTILS = False
+
 
 # ─────────────────────────────────────────────────────────────────
 def load_config(path: str) -> dict:
@@ -136,10 +142,19 @@ def evaluate_bleu(model, tokenizer, records: list, device: str,
             text = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            inputs = tokenizer(
-                text, images=[image], return_tensors="pt",
-                padding=True, truncation=True
-            ).to(device)
+            # Unsloth patches Qwen2-VL processor — must use process_vision_info
+            # and pass text as list (not string) to avoid 'multiple values' error
+            if HAS_QWEN_VL_UTILS:
+                image_inputs, _ = process_vision_info(messages)
+                inputs = tokenizer(
+                    text=[text], images=image_inputs,
+                    return_tensors="pt", padding=True,
+                ).to(device)
+            else:
+                inputs = tokenizer(
+                    text=[text], images=[image],
+                    return_tensors="pt", padding=True,
+                ).to(device)
 
             out_ids = model.generate(
                 **inputs,
