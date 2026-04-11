@@ -195,7 +195,12 @@ class BLEUEarlyStoppingCallback(TrainerCallback):
         bleu = evaluate_bleu(self.model, self.tokenizer, self.val_records,
                               self.device, print_samples=print_s,
                               max_samples=self.val_eval_samples)
-        train_loss = state.log_history[-1].get("loss", 0.0) if state.log_history else 0.0
+        # Get latest train loss (search backwards for 'loss' key)
+        train_loss = 0.0
+        for entry in reversed(state.log_history):
+            if "loss" in entry:
+                train_loss = entry["loss"]
+                break
         self.history.append({"epoch": epoch, "train_loss": train_loss, **bleu})
 
         n_eval = len(self.val_records) if self.val_eval_samples == 0 else self.val_eval_samples
@@ -324,6 +329,14 @@ def train(config_path: str):
     )
 
     trainer.train()
+
+    # Fallback: ensuite best_model est sauvegardé même si BLEU-4 = 0 à toutes les époques
+    best_path = os.path.join(ckpt_dir, "best_model")
+    if not os.path.exists(best_path):
+        print("[SAVE] ⚠️  best_model not found — saving final model as best_model")
+        model.save_pretrained(best_path)
+        tokenizer.save_pretrained(best_path)
+        print(f"[SAVE] ✓ Saved final model to {best_path}")
 
     # Summary
     if bleu_cb.history:

@@ -37,7 +37,7 @@ training:
   # Epochs & early stopping
   num_epochs: 10                   # upper bound — early stopping tự dừng
   early_stopping_patience: 3       # chờ 3 epoch không cải thiện BLEU-4
-  val_eval_samples: 0              # 0 = full val set (chuẩn nhất)
+  val_eval_samples: 50             # 50 mẫu ≈ 12 phút eval/epoch (0=full val ~67 phút)
 
   device: "auto"
 
