@@ -240,10 +240,13 @@ def evaluate(args):
             pred = generate_caption(model, tokenizer, image)
         except Exception as e:
             print(f"  [WARN] Generate failed at sample {i}: {e}", flush=True)
-            pred = ""
+            failed += 1
+            continue
 
-        if not pred:
-            pred = gt_captions[0]
+        if not pred.strip():
+            print(f"  [WARN] Empty prediction at sample {i}, skipping", flush=True)
+            failed += 1
+            continue
 
         hypotheses.append(pred.split())
         references.append([gt.split() for gt in gt_captions])
