@@ -190,14 +190,16 @@ def generate_caption(model, tokenizer, image: "Image.Image") -> str:
     else:
         inputs = tokenizer(text=[text], images=[image], return_tensors="pt", padding=True).to(device)
 
+    # Qwen2VLProcessor wraps tokenizer inside .tokenizer
+    _tok = getattr(tokenizer, "tokenizer", tokenizer)
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
             max_new_tokens=64,
             num_beams=4,
             early_stopping=True,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=_tok.pad_token_id,
+            eos_token_id=_tok.eos_token_id,
         )
     gen_ids = output_ids[:, inputs["input_ids"].shape[1]:]
     return tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
