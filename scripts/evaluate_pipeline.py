@@ -26,7 +26,9 @@ import os
 import sys
 import json
 import csv
+import math
 import argparse
+from collections import Counter
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
@@ -39,7 +41,18 @@ from transformers import (
     AutoModelForSeq2SeqLM, T5Tokenizer
 )
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
+from nltk.translate.meteor_score import meteor_score
+import nltk
+nltk.download("wordnet", quiet=True)
+nltk.download("omw-1.4", quiet=True)
 from huggingface_hub import hf_hub_download
+
+try:
+    from rouge_score import rouge_scorer as rouge_lib
+    HAS_ROUGE = True
+except ImportError:
+    HAS_ROUGE = False
+    print("[WARN] rouge-score not installed. Run: pip install rouge-score")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.dataset import UITViCCOCODataset
@@ -135,6 +148,75 @@ def compute_bleu(references, hypotheses):
     return {"bleu1": b1, "bleu2": b2, "bleu3": b3, "bleu4": b4}
 
 
+def _ngrams(tokens, n):
+    return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
+
+
+def compute_cider(hypotheses: list, references: list, n: int = 4) -> float:
+    """Simplified CIDEr-D (TF-IDF cosine similarity, x10 scale)."""
+    doc_freq = Counter()
+    num_docs  = len(references)
+    for refs in references:
+        seen = set()
+        for ref in refs:
+            for k in range(1, n + 1):
+                for ng in set(_ngrams(ref.split(), k)):
+                    if ng not in seen:
+                        doc_freq[ng] += 1
+                        seen.add(ng)
+
+    def get_tf(tokens):
+        c = Counter()
+        for k in range(1, n + 1):
+            c.update(_ngrams(tokens, k))
+        return c
+
+    def tfidf(tf_dict):
+        vec = {}
+        for ng, cnt in tf_dict.items():
+            idf = math.log((num_docs + 1.0) / (doc_freq.get(ng, 0) + 1.0))
+            vec[ng] = cnt * idf
+        return vec
+
+    scores = []
+    for hyp, refs in zip(hypotheses, references):
+        hyp_vec = tfidf(get_tf(hyp.split()))
+        avg_ref_tf = Counter()
+        for ref in refs:
+            for k, v in get_tf(ref.split()).items():
+                avg_ref_tf[k] += v / len(refs)
+        ref_vec = tfidf(avg_ref_tf)
+        dot    = sum(hyp_vec.get(k, 0) * v for k, v in ref_vec.items())
+        norm_h = math.sqrt(sum(v ** 2 for v in hyp_vec.values())) + 1e-10
+        norm_r = math.sqrt(sum(v ** 2 for v in ref_vec.values())) + 1e-10
+        scores.append(dot / (norm_h * norm_r))
+    return (sum(scores) / len(scores)) * 10.0 if scores else 0.0
+
+
+def compute_extra_metrics(hypotheses_str: list, references_str: list) -> dict:
+    """Compute METEOR, ROUGE-L, CIDEr for a list of hypotheses vs references."""
+    # METEOR
+    meteor_scores = []
+    for hyp, refs in zip(hypotheses_str, references_str):
+        meteor_scores.append(meteor_score([r.split() for r in refs], hyp.split()))
+    meteor = sum(meteor_scores) / len(meteor_scores) if meteor_scores else 0.0
+
+    # ROUGE-L
+    if HAS_ROUGE:
+        scorer = rouge_lib.RougeScorer(["rougeL"], use_stemmer=False)
+        rouge_scores = []
+        for hyp, refs in zip(hypotheses_str, references_str):
+            best = max(scorer.score(ref, hyp)["rougeL"].fmeasure for ref in refs)
+            rouge_scores.append(best)
+        rougeL = sum(rouge_scores) / len(rouge_scores) if rouge_scores else 0.0
+    else:
+        rougeL = 0.0
+
+    # CIDEr
+    cider = compute_cider(hypotheses_str, references_str)
+    return {"meteor": meteor, "rougeL": rougeL, "cider": cider}
+
+
 def evaluate(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[PIPELINE] Device: {device}")
@@ -190,29 +272,44 @@ def evaluate(args):
 
     # Compute BLEU
     print("\n[PIPELINE] Computing BLEU scores...")
-    blip_bleu   = compute_bleu(blip_refs, blip_hyps)
-    full_bleu   = compute_bleu(blip_refs, pipeline_hyps)
+    blip_bleu = compute_bleu(blip_refs, blip_hyps)
+    full_bleu = compute_bleu(blip_refs, pipeline_hyps)
+
+    # Compute extra metrics
+    print("[PIPELINE] Computing METEOR / ROUGE-L / CIDEr...")
+    blip_extra = compute_extra_metrics(blip_hyps,     [[r] for r in blip_refs])
+    full_extra = compute_extra_metrics(pipeline_hyps, [[r] for r in blip_refs])
 
     # Print results
-    print("\n" + "="*60)
+    print("\n" + "="*65)
     print("KẾT QUẢ ĐÁNH GIÁ PIPELINE")
-    print("="*60)
-    print(f"{'Metric':<12} {'BLIP Only':>12} {'BLIP + ViT5':>12} {'Improvement':>12}")
-    print("-"*50)
+    print("="*65)
+    print(f"{'Metric':<12} {'BLIP Only':>14} {'BLIP + ViT5':>14} {'Improvement':>12}")
+    print("-"*55)
     for k in ["bleu1", "bleu2", "bleu3", "bleu4"]:
-        b = blip_bleu[k]
-        p = full_bleu[k]
-        diff = p - b
-        print(f"{k.upper():<12} {b:>12.4f} {p:>12.4f} {diff:>+12.4f}")
-    print("="*60)
+        b = blip_bleu[k]; p = full_bleu[k]
+        print(f"{k.upper():<12} {b:>14.4f} {p:>14.4f} {p-b:>+12.4f}")
+    for label, bk, fk in [
+        ("METEOR",  blip_extra["meteor"],  full_extra["meteor"]),
+        ("ROUGE-L", blip_extra["rougeL"],  full_extra["rougeL"]),
+        ("CIDEr",   blip_extra["cider"],   full_extra["cider"]),
+    ]:
+        print(f"{label:<12} {bk:>14.4f} {fk:>14.4f} {fk-bk:>+12.4f}")
+    print("="*65)
 
     # Save CSV
     csv_path = os.path.join(args.output_dir, "pipeline_evaluation.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Metric", "BLIP_Only", "BLIP_ViT5", "Improvement"])
+        writer.writerow(["Metric", "BLIP_Only", "BLIP_ViT5_Jaccard", "Improvement"])
         for k in ["bleu1", "bleu2", "bleu3", "bleu4"]:
-            writer.writerow([k.upper(), blip_bleu[k], full_bleu[k], full_bleu[k] - blip_bleu[k]])
+            writer.writerow([k.upper(), f"{blip_bleu[k]:.4f}", f"{full_bleu[k]:.4f}", f"{full_bleu[k]-blip_bleu[k]:+.4f}"])
+        for label, bk, fk in [
+            ("METEOR",  blip_extra["meteor"],  full_extra["meteor"]),
+            ("ROUGE-L", blip_extra["rougeL"],  full_extra["rougeL"]),
+            ("CIDEr",   blip_extra["cider"],   full_extra["cider"]),
+        ]:
+            writer.writerow([label, f"{bk:.4f}", f"{fk:.4f}", f"{fk-bk:+.4f}"])
     print(f"\n[SAVED] CSV: {csv_path}")
 
     # Save qualitative examples
